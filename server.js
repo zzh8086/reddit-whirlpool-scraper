@@ -1,7 +1,9 @@
+require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const { scrapeThread } = require('./scraper');
+const { scrapeRedditThread } = require('./sources/reddit');
 const log = require('./logger');
 
 const app = express();
@@ -19,25 +21,47 @@ function sendSSE(res, data) {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+// URL source detection
+function detectSource(url) {
+  if (/reddit\.com\/r\/.+\/comments\//i.test(url)) return 'reddit';
+  if (/forums\.whirlpool\.net\.au\/thread\//i.test(url)) return 'whirlpool';
+  return null;
+}
+
+// Sanitize title for filename use
+function slugify(title) {
+  if (!title) return 'untitled';
+  return title
+    .replace(/[\s]+/g, '_')
+    .replace(/[<>:"/\\|?*.,;:!()\[\]{}'`~@#$%^&+=]+/g, '')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+    .substring(0, 50)
+    .trim() || 'untitled';
+}
+
 // API: Start scraping
 app.post('/api/scrape', async (req, res) => {
   const { url } = req.body;
-  if (!url || !url.includes('forums.whirlpool.net.au/thread/')) {
+  const source = detectSource(url || '');
+
+  if (!source) {
     log.warn('Invalid URL submitted', { url });
-    return res.status(400).json({ error: '请输入有效的 Whirlpool 帖子链接（例如 https://forums.whirlpool.net.au/thread/3rvj6xr7）' });
+    return res.status(400).json({ error: '请输入有效的帖子链接（Whirlpool 或 Reddit）' });
   }
 
-  log.info('Scrape request received', { url });
+  log.info('Scrape request received', { url, source });
 
   const taskId = Date.now().toString(36);
   const clients = new Set();
   tasks.set(taskId, { clients, status: 'started' });
 
+  const scraper = source === 'reddit' ? scrapeRedditThread : scrapeThread;
+
   res.json({ taskId });
 
-  // Run scraping in background
   try {
-    const result = await scrapeThread(url, (progress) => {
+    const result = await scraper(url, (progress) => {
       progress.taskId = taskId;
       tasks.get(taskId).lastProgress = progress;
       for (const clientRes of clients) {
@@ -45,27 +69,34 @@ app.post('/api/scrape', async (req, res) => {
       }
     });
 
-    // Ensure output directory exists
     const outDir = path.join(__dirname, 'output');
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-    const threadId = url.match(/\/thread\/([^?\s]+)/)?.[1] || taskId;
+    let jsonPath, htmlPath;
+    if (source === 'reddit') {
+      const slug = slugify(result.title);
+      const name = `reddit_${result.subreddit}_${slug}_${result.postId}`;
+      jsonPath = path.join(outDir, `${name}.json`);
+      htmlPath = path.join(outDir, `${name}.html`);
+    } else {
+      const threadId = url.match(/\/thread\/([^?\s]+)/)?.[1] || taskId;
+      const slug = slugify(result.title);
+      const name = `thread_${slug}_${threadId}`;
+      jsonPath = path.join(outDir, `${name}.json`);
+      htmlPath = path.join(outDir, `${name}.html`);
+    }
 
-    // Save as JSON
-    const jsonPath = path.join(outDir, `thread_${threadId}.json`);
     fs.writeFileSync(jsonPath, JSON.stringify(result, null, 2), 'utf-8');
     log.info('JSON saved', { path: jsonPath, sizeKb: (fs.statSync(jsonPath).size / 1024).toFixed(1) });
 
-    // Save as HTML
-    const htmlPath = path.join(outDir, `thread_${threadId}.html`);
     const htmlContent = generateHTML(result);
     fs.writeFileSync(htmlPath, htmlContent, 'utf-8');
     log.info('HTML saved', { path: htmlPath, sizeKb: (fs.statSync(htmlPath).size / 1024).toFixed(1) });
 
     tasks.get(taskId).result = {
       ...result,
-      jsonPath: `/output/thread_${threadId}.json`,
-      htmlPath: `/output/thread_${threadId}.html`,
+      jsonPath: `/output/${path.basename(jsonPath)}`,
+      htmlPath: `/output/${path.basename(htmlPath)}`,
     };
 
     for (const clientRes of clients) {
@@ -119,40 +150,50 @@ app.post('/api/scrape-batch', async (req, res) => {
     return res.status(400).json({ error: '请提供至少一个帖子链接' });
   }
 
-  const validUrls = urls.filter((u) => u && u.includes('forums.whirlpool.net.au/thread/'));
-  if (validUrls.length === 0) {
-    return res.status(400).json({ error: '没有有效的 Whirlpool 帖子链接' });
+  // Classify URLs
+  const classified = urls.map((u, i) => ({ url: u, index: i, source: detectSource(u) }));
+  const invalid = classified.filter((c) => !c.source);
+  if (invalid.length > 0) {
+    return res.status(400).json({
+      error: `${invalid.length} 个链接格式无效（不支持该网站或格式不对）`,
+      invalidUrls: invalid.map((c) => c.url),
+    });
   }
 
-  log.info('Batch scrape request received', { count: validUrls.length });
+  log.info('Batch scrape request received', { count: urls.length });
 
   const batchId = Date.now().toString(36);
   const batchClients = new Set();
-  const batchTasks = validUrls.map((url, i) => ({
-    taskId: batchId + '_' + i,
-    url,
+  const batchTasks = classified.map((c) => ({
+    taskId: batchId + '_' + c.index,
+    url: c.url,
+    source: c.source,
     status: 'pending',
   }));
 
   tasks.set(batchId, { clients: batchClients, tasks: batchTasks });
 
-  res.json({ batchId, tasks: batchTasks.map((t) => ({ taskId: t.taskId, url: t.url })) });
+  res.json({ batchId, tasks: batchTasks.map((t) => ({ taskId: t.taskId, url: t.url, source: t.source })) });
 
   const outDir = path.join(__dirname, 'output');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-  await runWithLimit(validUrls, 3, async (url, idx) => {
-    const task = batchTasks[idx];
+  await runWithLimit(classified, 3, async (item) => {
+    const { url, source, index } = item;
+    const task = batchTasks.find((t) => t.taskId === batchId + '_' + index);
+    if (!task) return;
     task.status = 'scraping';
 
     const broadcast = (data) => {
       for (const client of batchClients) {
-        sendSSE(client, { batchId, taskId: task.taskId, url, ...data });
+        sendSSE(client, { batchId, taskId: task.taskId, url, source, ...data });
       }
     };
 
+    const scraper = source === 'reddit' ? scrapeRedditThread : scrapeThread;
+
     try {
-      const result = await scrapeThread(url, (progress) => {
+      const result = await scraper(url, (progress) => {
         broadcast({
           status: progress.status,
           page: progress.page,
@@ -161,22 +202,31 @@ app.post('/api/scrape-batch', async (req, res) => {
         });
       });
 
-      const threadId = url.match(/\/thread\/([^?\s]+)/)?.[1] || task.taskId;
+      let jsonPath, htmlPath;
+      if (source === 'reddit') {
+        const slug = slugify(result.title);
+        const name = `reddit_${result.subreddit}_${slug}_${result.postId}`;
+        jsonPath = path.join(outDir, `${name}.json`);
+        htmlPath = path.join(outDir, `${name}.html`);
+      } else {
+        const threadId = url.match(/\/thread\/([^?\s]+)/)?.[1] || task.taskId;
+        const slug = slugify(result.title);
+        const name = `thread_${slug}_${threadId}`;
+        jsonPath = path.join(outDir, `${name}.json`);
+        htmlPath = path.join(outDir, `${name}.html`);
+      }
 
-      const jsonPath = path.join(outDir, `thread_${threadId}.json`);
       fs.writeFileSync(jsonPath, JSON.stringify(result, null, 2), 'utf-8');
-
-      const htmlPath = path.join(outDir, `thread_${threadId}.html`);
       fs.writeFileSync(htmlPath, generateHTML(result), 'utf-8');
 
       task.status = 'done';
       broadcast({
         status: 'done',
-        message: `完成：${result.title}（${result.totalPosts} 条回复）`,
+        message: `完成：${result.title}（${result.totalPosts} 条内容）`,
         result: {
           ...result,
-          jsonPath: `/output/thread_${threadId}.json`,
-          htmlPath: `/output/thread_${threadId}.html`,
+          jsonPath: `/output/${path.basename(jsonPath)}`,
+          htmlPath: `/output/${path.basename(htmlPath)}`,
         },
       });
     } catch (err) {
@@ -186,7 +236,6 @@ app.post('/api/scrape-batch', async (req, res) => {
     }
   });
 
-  // Signal batch complete
   for (const client of batchClients) {
     sendSSE(client, { batchId, status: 'batch_done', message: '全部任务完成' });
     client.end();
@@ -267,6 +316,61 @@ app.get('/', (_req, res) => {
 });
 
 function generateHTML(data) {
+  if (data.source === 'reddit') return generateRedditHTML(data);
+  return generateWhirlpoolHTML(data);
+}
+
+function generateRedditHTML(data) {
+  const postsHTML = data.posts
+    .map(
+      (p) => `
+    <div class="post ${p.isOP ? 'op' : ''}" id="post-${p.floor}">
+      <div class="post-header">
+        <span class="floor">#${p.floor}</span>
+        <span class="user">${escapeHTML(p.userName)}</span>
+        ${p.isOP ? '<span class="op-badge">楼主</span>' : ''}
+        <span class="score">${p.score !== undefined ? `+${p.score}` : ''}</span>
+        <span class="date">${escapeHTML(p.date)}</span>
+        ${p.shortLink ? `<a class="anchor" href="${escapeHTML(p.shortLink)}" target="_blank">原文链接</a>` : ''}
+      </div>
+      <div class="post-body">${escapeHTML(p.content).replace(/\n/g, '<br>')}</div>
+    </div>`
+    )
+    .join('\n');
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHTML(data.title)}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+    h1 { font-size: 20px; margin-bottom: 4px; }
+    .meta { color: #666; font-size: 13px; margin-bottom: 20px; }
+    .meta a { color: #ff4500; }
+    .post { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 10px; border-left: 3px solid #ddd; }
+    .post.op { border-left-color: #ff4500; }
+    .post-header { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; font-size: 13px; color: #555; flex-wrap: wrap; }
+    .floor { font-weight: 700; color: #999; }
+    .user { font-weight: 600; color: #333; }
+    .op-badge { background: #ff4500; color: #fff; padding: 1px 6px; border-radius: 3px; font-size: 11px; }
+    .score { color: #ff4500; font-weight: 600; }
+    .date { color: #999; margin-left: auto; }
+    .anchor { color: #ff4500; font-size: 12px; text-decoration: none; }
+    .post-body { line-height: 1.7; color: #222; word-break: break-word; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHTML(data.title)}</h1>
+  <div class="meta">r/${escapeHTML(data.subreddit)} | 总内容: ${data.totalPosts} | 页数: ${data.totalPages} | <a href="${escapeHTML(data.threadUrl)}" target="_blank">原帖链接</a></div>
+  ${postsHTML}
+</body>
+</html>`;
+}
+
+function generateWhirlpoolHTML(data) {
   const postsHTML = data.posts
     .map(
       (p) => `

@@ -3,21 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Whirlpool Forum Scraper</title>
+  <title>Forum Scraper - Whirlpool & Reddit</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>Whirlpool 论坛帖子爬取工具</h1>
-      <p>粘贴帖子链接（每行一个），自动爬取全部楼层内容</p>
+      <h1>论坛帖子爬取工具</h1>
+      <p>粘贴帖子链接（每行一个），支持 Whirlpool 和 Reddit，自动识别</p>
     </header>
 
     <div class="input-area">
       <textarea
         id="urlInput"
-        placeholder="粘贴帖子链接，每行一个&#10;例如 https://forums.whirlpool.net.au/thread/xxxxx&#10;https://forums.whirlpool.net.au/thread/yyyyy"
-        rows="4"
+        placeholder="粘贴帖子链接，每行一个（Whirlpool / Reddit 自动识别）&#10;例如：&#10;https://forums.whirlpool.net.au/thread/xxxxx&#10;https://www.reddit.com/r/CarsAustralia/comments/xxxxx/..."
+        rows="5"
       ></textarea>
       <button id="startBtn" onclick="startScrape()">开始爬取</button>
     </div>
@@ -47,11 +47,18 @@
       setTimeout(() => $('error').classList.remove('visible'), 8000);
     }
 
-    function buildTaskCard(taskId, url) {
-      const shortUrl = url.replace(/https?:\/\/forums\.whirlpool\.net\.au\/thread\//, '.../');
+    function buildTaskCard(taskId, url, source) {
+      let shortUrl;
+      if (/reddit\.com\/r\//i.test(url)) {
+        const m = url.match(/reddit\.com\/r\/([^/]+)\/comments\/([a-z0-9]+)/i);
+        shortUrl = m ? `r/${m[1]}/...${m[2].substring(0, 6)}` : url.substring(0, 50) + '...';
+      } else {
+        shortUrl = url.replace(/https?:\/\/forums\.whirlpool\.net\.au\/thread\//, '.../');
+      }
+      const sourceTag = source === 'reddit' ? ' <span style="color:#ff4500;font-size:11px;">Reddit</span>' : ' <span style="color:#4a90d9;font-size:11px;">Whirlpool</span>';
       return `
         <div class="task-card" id="card-${taskId}">
-          <div class="task-url" title="${escapeHTML(url)}">${escapeHTML(shortUrl)}</div>
+          <div class="task-url" title="${escapeHTML(url)}">${escapeHTML(shortUrl)}${sourceTag}</div>
           <div class="progress-bar">
             <div id="fill-${taskId}" class="progress-bar-fill"></div>
           </div>
@@ -79,9 +86,13 @@
       // Build task cards
       const tasksArea = $('tasksArea');
       tasksArea.innerHTML = '';
+      const urlSources = urls.map((u) => {
+        if (/reddit\.com\/r\/.+\/comments\//i.test(u)) return 'reddit';
+        return 'whirlpool';
+      });
       urls.forEach((url, i) => {
         const taskId = `task_${Date.now().toString(36)}_${i}`;
-        tasksArea.insertAdjacentHTML('beforeend', buildTaskCard(taskId, url));
+        tasksArea.insertAdjacentHTML('beforeend', buildTaskCard(taskId, url, urlSources[i]));
       });
 
       // Reset

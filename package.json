@@ -1,0 +1,16 @@
+{
+  "name": "whirlpool-scraper",
+  "version": "1.0.0",
+  "description": "Whirlpool forum thread scraper with web UI",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "express": "^4.21.0",
+    "playwright": "^1.52.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}

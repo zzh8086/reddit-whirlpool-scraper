@@ -1,0 +1,278 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: #f0f2f5;
+  color: #333;
+  min-height: 100vh;
+}
+
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+header h1 {
+  font-size: 22px;
+  color: #1a1a1a;
+  margin-bottom: 4px;
+}
+
+header p {
+  color: #888;
+  font-size: 13px;
+}
+
+/* Input area */
+.input-area {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.input-area {
+  flex-direction: column;
+}
+
+.input-area textarea {
+  width: 100%;
+  padding: 12px 16px;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: "SF Mono", "Consolas", "Monaco", monospace;
+  outline: none;
+  transition: border-color 0.2s;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.input-area textarea:focus {
+  border-color: #4a90d9;
+}
+
+.input-area button {
+  padding: 12px 28px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  background: #4a90d9;
+  color: #fff;
+  transition: background 0.2s;
+  white-space: nowrap;
+  margin-top: 10px;
+  align-self: flex-start;
+}
+
+.input-area button:hover:not(:disabled) {
+  background: #3a7bc8;
+}
+
+.input-area button:disabled {
+  background: #aaa;
+  cursor: not-allowed;
+}
+
+/* Progress area */
+.progress-area {
+  background: #fff;
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 16px;
+  display: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.progress-area.visible {
+  display: block;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background: #e8e8e8;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4a90d9, #67b26f);
+  border-radius: 4px;
+  transition: width 0.4s ease;
+  width: 0%;
+}
+
+.progress-text {
+  font-size: 13px;
+  color: #666;
+}
+
+/* Result area */
+.result-area {
+  background: #fff;
+  border-radius: 10px;
+  padding: 20px;
+  display: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.result-area.visible {
+  display: block;
+}
+
+.result-area h3 {
+  font-size: 16px;
+  margin-bottom: 8px;
+  color: #1a1a1a;
+}
+
+.result-stats {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: #666;
+}
+
+.result-stats span {
+  font-weight: 600;
+  color: #333;
+}
+
+.result-links {
+  display: flex;
+  gap: 10px;
+}
+
+.result-links a {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 16px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  transition: opacity 0.2s;
+}
+
+.result-links a:hover {
+  opacity: 0.85;
+}
+
+.btn-html {
+  background: #f5f5f5;
+  color: #333;
+}
+
+.btn-json {
+  background: #333;
+  color: #fff;
+}
+
+/* Error */
+.error-msg {
+  background: #fff0f0;
+  color: #c00;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  display: none;
+}
+
+.error-msg.visible {
+  display: block;
+}
+
+/* Batch task cards */
+.tasks-area {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.task-card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.task-url {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-status {
+  font-size: 13px;
+  color: #666;
+  margin-top: 6px;
+}
+
+.task-status.done { color: #2e7d32; }
+.task-status.error { color: #c00; }
+.task-status.scraping { color: #4a90d9; }
+
+.task-result {
+  margin-top: 10px;
+}
+
+.task-result .result-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin-bottom: 8px;
+}
+
+.task-result .result-links {
+  display: flex;
+  gap: 8px;
+}
+
+.task-result .result-links a {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  transition: opacity 0.2s;
+}
+
+.task-result .btn-html {
+  background: #f5f5f5;
+  color: #333;
+}
+
+.task-result .btn-json {
+  background: #333;
+  color: #fff;
+}
+
+/* Footer */
+footer {
+  text-align: center;
+  margin-top: 32px;
+  font-size: 12px;
+  color: #bbb;
+}

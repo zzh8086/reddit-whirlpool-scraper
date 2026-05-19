@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whirlpool Forum Scraper</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Whirlpool 论坛帖子爬取工具</h1>
+      <p>粘贴帖子链接（每行一个），自动爬取全部楼层内容</p>
+    </header>
+
+    <div class="input-area">
+      <textarea
+        id="urlInput"
+        placeholder="粘贴帖子链接，每行一个&#10;例如 https://forums.whirlpool.net.au/thread/xxxxx&#10;https://forums.whirlpool.net.au/thread/yyyyy"
+        rows="4"
+      ></textarea>
+      <button id="startBtn" onclick="startScrape()">开始爬取</button>
+    </div>
+
+    <div id="error" class="error-msg"></div>
+
+    <div id="tasksArea" class="tasks-area"></div>
+
+    <div id="logArea" style="display:none; margin-top:16px; background:#fff; border-radius:10px; padding:16px; box-shadow:0 1px 3px rgba(0,0,0,.08);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <strong style="font-size:14px;">运行日志</strong>
+        <button onclick="loadLogs()" style="border:1px solid #ddd; background:#fff; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:12px;">刷新</button>
+      </div>
+      <div id="logContent" style="font-family:monospace; font-size:11px; max-height:300px; overflow-y:auto; background:#f8f8f8; border-radius:6px; padding:10px; white-space:pre-wrap; word-break:break-all; color:#555;"></div>
+    </div>
+
+    <footer>仅供产品市场分析使用，请遵守网站使用条款。</footer>
+  </div>
+
+  <script>
+    let eventSource = null;
+    const $ = (id) => document.getElementById(id);
+
+    function showError(msg) {
+      $('error').textContent = msg;
+      $('error').classList.add('visible');
+      setTimeout(() => $('error').classList.remove('visible'), 8000);
+    }
+
+    function buildTaskCard(taskId, url) {
+      const shortUrl = url.replace(/https?:\/\/forums\.whirlpool\.net\.au\/thread\//, '.../');
+      return `
+        <div class="task-card" id="card-${taskId}">
+          <div class="task-url" title="${escapeHTML(url)}">${escapeHTML(shortUrl)}</div>
+          <div class="progress-bar">
+            <div id="fill-${taskId}" class="progress-bar-fill"></div>
+          </div>
+          <div class="task-status" id="status-${taskId}">等待中...</div>
+          <div class="task-result" id="result-${taskId}"></div>
+        </div>`;
+    }
+
+    async function startScrape() {
+      const text = $('urlInput').value.trim();
+      if (!text) {
+        showError('请输入至少一个帖子链接');
+        return;
+      }
+
+      const urls = text.split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
+
+      if (urls.length === 0) {
+        showError('请输入至少一个帖子链接');
+        return;
+      }
+
+      // Build task cards
+      const tasksArea = $('tasksArea');
+      tasksArea.innerHTML = '';
+      urls.forEach((url, i) => {
+        const taskId = `task_${Date.now().toString(36)}_${i}`;
+        tasksArea.insertAdjacentHTML('beforeend', buildTaskCard(taskId, url));
+      });
+
+      // Reset
+      $('startBtn').disabled = true;
+      $('startBtn').textContent = '爬取中...';
+      $('error').classList.remove('visible');
+
+      // Close previous SSE
+      if (eventSource) eventSource.close();
+
+      try {
+        const res = await fetch('/api/scrape-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ urls }),
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || '请求失败');
+        }
+
+        const { batchId, tasks } = await res.json();
+        // Map server taskIds to our card taskIds
+        const taskMap = {};
+        tasks.forEach((t, i) => {
+          taskMap[t.taskId] = urls[i];
+        });
+
+        // Store batchId for SSE reconnection reference
+        listenBatch(batchId, urls);
+      } catch (e) {
+        showError(e.message);
+        resetButton();
+      }
+    }
+
+    function listenBatch(batchId, urls) {
+      eventSource = new EventSource(`/api/batch-progress/${batchId}`);
+
+      const taskCards = {};
+      urls.forEach((url, i) => {
+        // Find matching card - the i-th card in the DOM
+        const cards = document.querySelectorAll('.task-card');
+        if (cards[i]) {
+          const taskId = cards[i].id.replace('card-', '');
+          taskCards[`${batchId}_${i}`] = taskId;
+        }
+      });
+
+      eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.status === 'batch_done') {
+          resetButton();
+          eventSource.close();
+          return;
+        }
+
+        if (data.status === 'error') {
+          // Single task error within batch
+          const cardTaskId = taskCards[data.taskId];
+          if (cardTaskId) {
+            updateStatus(cardTaskId, '❌ ' + data.message, 'error');
+          }
+          return;
+        }
+
+        const cardTaskId = taskCards[data.taskId];
+        if (!cardTaskId) return;
+
+        if (data.status === 'done') {
+          const pct = 100;
+          const fill = document.getElementById(`fill-${cardTaskId}`);
+          if (fill) fill.style.width = pct + '%';
+
+          const r = data.result;
+          updateStatus(cardTaskId, `✅ 完成（${r.totalPosts} 条回复，${r.totalPages} 页）`, 'done');
+          showResult(cardTaskId, r);
+          return;
+        }
+
+        // Progress update
+        const pct = data.totalPages > 0 ? Math.round((data.page / data.totalPages) * 100) : 0;
+        const fill = document.getElementById(`fill-${cardTaskId}`);
+        if (fill) fill.style.width = pct + '%';
+        updateStatus(cardTaskId, data.message, 'scraping');
+      };
+
+      eventSource.onerror = () => {
+        // Connection lost — will retry automatically
+      };
+    }
+
+    function updateStatus(cardTaskId, msg, cls) {
+      const el = document.getElementById(`status-${cardTaskId}`);
+      if (el) {
+        el.textContent = msg;
+        el.className = 'task-status ' + cls;
+      }
+    }
+
+    function showResult(cardTaskId, r) {
+      const el = document.getElementById(`result-${cardTaskId}`);
+      if (!el) return;
+      el.innerHTML = `
+        <div class="result-title">${escapeHTML(r.title)}</div>
+        <div class="result-links">
+          <a class="btn-html" href="${r.htmlPath}" target="_blank">HTML</a>
+          <a class="btn-json" href="${r.jsonPath}" target="_blank">JSON</a>
+        </div>`;
+    }
+
+    function resetButton() {
+      $('startBtn').disabled = false;
+      $('startBtn').textContent = '开始爬取';
+    }
+
+    async function loadLogs() {
+      try {
+        const res = await fetch('/api/logs');
+        const data = await res.json();
+        $('logArea').style.display = 'block';
+        if (data.todayLog.length === 0) {
+          $('logContent').textContent = '(暂无日志)';
+        } else {
+          $('logContent').textContent = data.todayLog.join('\n');
+          $('logContent').scrollTop = $('logContent').scrollHeight;
+        }
+      } catch (e) {
+        $('logContent').textContent = '加载失败: ' + e.message;
+      }
+    }
+
+    loadLogs();
+
+    $('urlInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.ctrlKey) startScrape();
+    });
+
+    function escapeHTML(str) {
+      if (!str) return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+  </script>
+</body>
+</html>

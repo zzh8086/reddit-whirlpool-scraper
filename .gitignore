@@ -6,3 +6,4 @@ output/
 .claude/
 .env
 *.log
+test-pages/

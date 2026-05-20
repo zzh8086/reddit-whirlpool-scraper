@@ -3,20 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Forum Scraper - Whirlpool & Reddit</title>
+  <title>Forum Scraper - Whirlpool & Reddit & ProductReview</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <div class="container">
     <header>
       <h1>论坛帖子爬取工具</h1>
-      <p>粘贴帖子链接（每行一个），支持 Whirlpool 和 Reddit，自动识别</p>
+      <p>粘贴帖子链接（每行一个），支持 Whirlpool、Reddit（含搜索）、ProductReview，自动识别</p>
     </header>
 
     <div class="input-area">
       <textarea
         id="urlInput"
-        placeholder="粘贴帖子链接，每行一个（Whirlpool / Reddit 自动识别）&#10;例如：&#10;https://forums.whirlpool.net.au/thread/xxxxx&#10;https://www.reddit.com/r/CarsAustralia/comments/xxxxx/..."
+        placeholder="粘贴帖子链接，每行一个（Whirlpool / Reddit / ProductReview / Reddit搜索 自动识别）&#10;例如：&#10;https://forums.whirlpool.net.au/thread/xxxxx&#10;https://www.reddit.com/r/CarsAustralia/comments/xxxxx/...&#10;https://www.reddit.com/r/CarsAustralia/search?q=toyota+camry&restrict_sr=on&#10;https://www.productreview.com.au/listings/toyota-camry"
         rows="5"
       ></textarea>
       <button id="startBtn" onclick="startScrape()">开始爬取</button>
@@ -41,6 +41,19 @@
     let eventSource = null;
     const $ = (id) => document.getElementById(id);
 
+    async function stopTask(btn) {
+      const card = btn.closest('.task-card');
+      const serverTaskId = card ? card.getAttribute('data-server-taskid') : '';
+      if (!serverTaskId) return;
+      try {
+        btn.disabled = true;
+        btn.textContent = '...';
+        await fetch(`/api/cancel/${encodeURIComponent(serverTaskId)}`, { method: 'POST' });
+      } catch (e) {
+        // ignore
+      }
+    }
+
     function showError(msg) {
       $('error').textContent = msg;
       $('error').classList.add('visible');
@@ -49,16 +62,35 @@
 
     function buildTaskCard(taskId, url, source) {
       let shortUrl;
-      if (/reddit\.com\/r\//i.test(url)) {
+      if (/reddit\.com\/search/i.test(url)) {
+        const params = new URL(url).searchParams;
+        const q = params.get('q') || '';
+        shortUrl = `reddit/search?q=${q.substring(0, 20)}`;
+      } else if (/reddit\.com\/r\/.+\/search/i.test(url) || /reddit\.com\/r\/[^/]+\?q=/i.test(url)) {
+        const m = url.match(/reddit\.com\/r\/([^/]+)/i);
+        const params = new URL(url).searchParams;
+        const q = params.get('q') || '';
+        shortUrl = m ? `r/${m[1]}/search?q=${q.substring(0, 20)}` : url.substring(0, 50) + '...';
+      } else if (/reddit\.com\/r\//i.test(url)) {
         const m = url.match(/reddit\.com\/r\/([^/]+)\/comments\/([a-z0-9]+)/i);
         shortUrl = m ? `r/${m[1]}/...${m[2].substring(0, 6)}` : url.substring(0, 50) + '...';
+      } else if (/productreview\.com\.au\/listings\//i.test(url)) {
+        const m = url.match(/productreview\.com\.au\/listings\/([^/?\s]+)/i);
+        shortUrl = m ? `productreview/.../${m[1]}` : url.substring(0, 50) + '...';
       } else {
         shortUrl = url.replace(/https?:\/\/forums\.whirlpool\.net\.au\/thread\//, '.../');
       }
-      const sourceTag = source === 'reddit' ? ' <span style="color:#ff4500;font-size:11px;">Reddit</span>' : ' <span style="color:#4a90d9;font-size:11px;">Whirlpool</span>';
+      let sourceTag;
+      if (source === 'reddit') sourceTag = ' <span style="color:#ff4500;font-size:11px;">Reddit</span>';
+      else if (source === 'reddit-search') sourceTag = ' <span style="color:#ff4500;font-size:11px;">Reddit搜索</span>';
+      else if (source === 'productreview') sourceTag = ' <span style="color:#80ba27;font-size:11px;">ProductReview</span>';
+      else sourceTag = ' <span style="color:#4a90d9;font-size:11px;">Whirlpool</span>';
       return `
-        <div class="task-card" id="card-${taskId}">
-          <div class="task-url" title="${escapeHTML(url)}">${escapeHTML(shortUrl)}${sourceTag}</div>
+        <div class="task-card" id="card-${taskId}" data-server-taskid="">
+          <div class="task-url" title="${escapeHTML(url)}">
+            ${escapeHTML(shortUrl)}${sourceTag}
+            <button class="btn-stop" id="stop-${taskId}" onclick="stopTask(this)" title="停止爬取">✕</button>
+          </div>
           <div class="progress-bar">
             <div id="fill-${taskId}" class="progress-bar-fill"></div>
           </div>
@@ -87,7 +119,13 @@
       const tasksArea = $('tasksArea');
       tasksArea.innerHTML = '';
       const urlSources = urls.map((u) => {
+        if (/reddit\.com\/(r\/[^/]+\/)?search/i.test(u) || /reddit\.com\/r\/[^/]+\?q=/i.test(u)) {
+          try {
+            if (new URL(u).searchParams.get('q')) return 'reddit-search';
+          } catch (_) {}
+        }
         if (/reddit\.com\/r\/.+\/comments\//i.test(u)) return 'reddit';
+        if (/productreview\.com\.au\/listings\//i.test(u)) return 'productreview';
         return 'whirlpool';
       });
       urls.forEach((url, i) => {
@@ -138,8 +176,11 @@
         // Find matching card - the i-th card in the DOM
         const cards = document.querySelectorAll('.task-card');
         if (cards[i]) {
-          const taskId = cards[i].id.replace('card-', '');
-          taskCards[`${batchId}_${i}`] = taskId;
+          const cardTaskId = cards[i].id.replace('card-', '');
+          const serverTaskId = `${batchId}_${i}`;
+          taskCards[serverTaskId] = cardTaskId;
+          // Store server taskId on the card so stop button can use it
+          cards[i].setAttribute('data-server-taskid', serverTaskId);
         }
       });
 
@@ -153,10 +194,19 @@
         }
 
         if (data.status === 'error') {
-          // Single task error within batch
           const cardTaskId = taskCards[data.taskId];
           if (cardTaskId) {
             updateStatus(cardTaskId, '❌ ' + data.message, 'error');
+            hideStopButton(cardTaskId);
+          }
+          return;
+        }
+
+        if (data.status === 'cancelled') {
+          const cardTaskId = taskCards[data.taskId];
+          if (cardTaskId) {
+            updateStatus(cardTaskId, '⏹ 已取消', 'cancelled');
+            hideStopButton(cardTaskId);
           }
           return;
         }
@@ -172,6 +222,7 @@
           const r = data.result;
           updateStatus(cardTaskId, `✅ 完成（${r.totalPosts} 条回复，${r.totalPages} 页）`, 'done');
           showResult(cardTaskId, r);
+          hideStopButton(cardTaskId);
           return;
         }
 
@@ -185,6 +236,14 @@
       eventSource.onerror = () => {
         // Connection lost — will retry automatically
       };
+    }
+
+    function hideStopButton(cardTaskId) {
+      const card = document.getElementById(`card-${cardTaskId}`);
+      if (card) {
+        const btn = card.querySelector('.btn-stop');
+        if (btn) btn.style.display = 'none';
+      }
     }
 
     function updateStatus(cardTaskId, msg, cls) {

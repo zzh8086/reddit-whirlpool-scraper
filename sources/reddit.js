@@ -202,7 +202,15 @@ async function scrapeRedditThread(postUrl, onProgress) {
 
   log.info('=== Starting Reddit scrape ===', { url: baseUrl, subreddit, postId });
 
-  onProgress({ taskId, status: 'starting', page: 1, totalPages: '?', message: '正在连接 Reddit...' });
+  let title = '';
+  let allPosts = [];
+  let pageNum = 0;
+  let score = 0;
+  let postData = null;
+  let estimatedPages = 0;
+
+  try {
+    onProgress({ taskId, status: 'starting', page: 1, totalPages: '?', message: '正在连接 Reddit...' });
 
   // Fetch first page
   const data = await fetchCommentPage(postId, subreddit, null);
@@ -214,15 +222,15 @@ async function scrapeRedditThread(postUrl, onProgress) {
   const postListing = data[0];
   const commentListing = data[1];
 
-  const postData = postListing.data?.children?.[0]?.data;
+  postData = postListing.data?.children?.[0]?.data;
   if (!postData) {
     throw new Error('Could not find post data in Reddit response');
   }
 
-  const title = postData.title || '(Untitled)';
+  title = postData.title || '(Untitled)';
   const postAuthor = postData.author || '';
   const totalComments = postData.num_comments || 0;
-  const score = postData.score || 0;
+  score = postData.score || 0;
   const createdUtc = postData.created_utc;
 
   // Estimate total comment pages
@@ -234,7 +242,7 @@ async function scrapeRedditThread(postUrl, onProgress) {
     message: `标题: ${title} | r/${subreddit} | 约 ${totalComments} 条评论`,
   });
 
-  const allPosts = [];
+  allPosts = [];
   let floor = 0;
 
   // Add OP selftext as post #1 if present
@@ -261,7 +269,7 @@ async function scrapeRedditThread(postUrl, onProgress) {
 
   // Paginate through remaining comments
   let after = commentListing.data?.after;
-  let pageNum = 1;
+  pageNum = 1;
 
   while (after) {
     pageNum++;
@@ -328,20 +336,263 @@ async function scrapeRedditThread(postUrl, onProgress) {
     message: `完成！共 ${allPosts.length} 条内容（r/${subreddit}）`,
   });
 
+    return {
+      taskId,
+      source: 'reddit',
+      title,
+      threadUrl: baseUrl,
+      subreddit,
+      postId,
+      score,
+      url: postData?.url || baseUrl,
+      totalPages: pageNum,
+      totalPosts: allPosts.length,
+      posts: allPosts,
+      failedPages: [],
+    };
+  } catch (error) {
+    if (error.message === 'TASK_CANCELLED') {
+      log.info('Reddit scrape cancelled, saving partial', { taskId, posts: allPosts.length });
+      return {
+        taskId, source: 'reddit',
+        title: title || 'Unknown',
+        threadUrl: baseUrl, subreddit, postId,
+        score, url: postData?.url || baseUrl,
+        totalPages: pageNum,
+        totalPosts: allPosts.length,
+        posts: allPosts, failedPages: [],
+        cancelled: true,
+      };
+    }
+    throw error;
+  }
+}
+
+function parseRedditSearchUrl(url) {
+  const params = new URL(url).searchParams;
+  const query = params.get('q') || '';
+  if (!query) return null;
+
+  let subreddit = null;
+  let restrictSr = false;
+
+  // Subreddit-specific search: /r/subreddit/search?q=...
+  const m1 = url.match(/reddit\.com\/r\/([^/]+)\/search\b/i);
+  if (m1) {
+    subreddit = m1[1];
+    restrictSr = params.get('restrict_sr') !== 'off';
+  }
+  // New Reddit sub search: /r/subreddit/?q=... or /r/subreddit?q=...
+  const m2 = url.match(/reddit\.com\/r\/([^/]+)\/\?q=/i) || url.match(/reddit\.com\/r\/([^/]+)\?q=/i);
+  if (m2 && !subreddit) {
+    subreddit = m2[1];
+  }
+  // Global search: /search/?q=... or /search?q=...
+  const m3 = url.match(/reddit\.com\/search\b/i);
+  if (m3 && !subreddit) {
+    subreddit = 'all';
+  }
+
+  if (!query) return null;
   return {
-    taskId,
-    source: 'reddit',
-    title,
-    threadUrl: baseUrl,
-    subreddit,
-    postId,
-    score,
-    url: postData.url || baseUrl,
-    totalPages: pageNum,
-    totalPosts: allPosts.length,
-    posts: allPosts,
-    failedPages: [],
+    subreddit: subreddit || 'all',
+    query,
+    sort: params.get('sort') || 'relevance',
+    restrictSr,
   };
 }
 
-module.exports = { scrapeRedditThread, parseRedditUrl };
+async function scrapeRedditSearch(searchUrl, onProgress) {
+  const parsed = parseRedditSearchUrl(searchUrl);
+  if (!parsed) throw new Error('Invalid Reddit search URL: ' + searchUrl);
+
+  const { subreddit, query, sort, restrictSr } = parsed;
+  const taskId = Date.now().toString(36);
+
+  const scopeLabel = subreddit === 'all' ? 'Reddit全站' : `r/${subreddit}`;
+  onProgress({ taskId, status: 'starting', page: 1, totalPages: '?', message: `正在搜索 ${scopeLabel} 中 "${query}" 的帖子...` });
+
+  // Fetch all search result pages to collect post links
+  let allPosts = [];
+  let scrapedCount = 0;
+  let results = [];
+  let allFlattenedPosts = [];
+  let searchPage = 0;
+
+  try {
+    let after = null;
+    const maxSearchPages = 5; // cap at ~500 results
+
+  const searchPath = subreddit === 'all'
+    ? `https://old.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=${sort}&limit=100`
+    : `https://old.reddit.com/r/${subreddit}/search.json?q=${encodeURIComponent(query)}&restrict_sr=${restrictSr ? 'on' : 'off'}&sort=${sort}&limit=100`;
+  const baseSearchUrl = searchPath;
+
+  while (searchPage < maxSearchPages) {
+    const url = baseSearchUrl + (after ? `&after=${after}` : '');
+    log.info(`Reddit search page ${searchPage + 1}: ${url}`);
+
+    let data;
+    try {
+      data = await fetchRedditJSON(url);
+    } catch (e) {
+      if (searchPage === 0) throw e;
+      log.warn(`Reddit search page ${searchPage + 1} failed: ${e.message}`);
+      break;
+    }
+
+    const children = data?.data?.children || [];
+    for (const child of children) {
+      if (child.kind === 't3' && child.data) {
+        const d = child.data;
+        allPosts.push({
+          subreddit: d.subreddit,
+          postId: d.id,
+          title: d.title || '',
+          permalink: d.permalink || '',
+          numComments: d.num_comments || 0,
+          score: d.score || 0,
+        });
+      }
+    }
+
+    log.info(`Reddit search page ${searchPage + 1}: found ${children.length} results (total: ${allPosts.length})`);
+
+    after = data?.data?.after;
+    if (!after) break;
+    searchPage++;
+
+    if (after) {
+      const delay = 1000 + Math.random() * 2000;
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+
+  log.info(`Reddit search complete: ${allPosts.length} total posts found`);
+
+  if (allPosts.length === 0) {
+    onProgress({ taskId, status: 'done', page: 1, totalPages: 1, message: '搜索未找到任何帖子' });
+    return {
+      taskId,
+      source: 'reddit-search',
+      title: subreddit === 'all' ? `Search: ${query} (all Reddit)` : `Search: ${query} in r/${subreddit}`,
+      threadUrl: searchUrl,
+      subreddit,
+      searchQuery: query,
+      totalPosts: 0,
+      totalPages: 0,
+      posts: [],
+      failedPages: [],
+    };
+  }
+
+  onProgress({
+    taskId, status: 'parsing',
+    page: 1, totalPages: allPosts.length,
+    message: `找到 ${allPosts.length} 个帖子，开始逐个爬取...`,
+  });
+
+  // Scrape each thread
+  results = [];
+  const failedThreads = [];
+  scrapedCount = 0;
+
+  for (let i = 0; i < allPosts.length; i++) {
+    const p = allPosts[i];
+    const threadUrl = `https://old.reddit.com/r/${p.subreddit}/comments/${p.postId}/.json`;
+
+    onProgress({
+      taskId, status: 'scraping',
+      page: i + 1, totalPages: allPosts.length,
+      message: `[${i + 1}/${allPosts.length}] 正在爬取: ${p.title.substring(0, 60)}...`,
+    });
+
+    try {
+      const result = await scrapeRedditThread(threadUrl, () => {
+        // inner progress ignored for simplicity; outer progress tracks thread-level
+      });
+      results.push({
+        threadUrl,
+        title: result.title,
+        totalPosts: result.totalPosts,
+        posts: result.posts,
+      });
+      scrapedCount++;
+    } catch (e) {
+      log.warn(`Reddit thread failed: ${threadUrl} — ${e.message}`);
+      failedThreads.push({ url: threadUrl, error: e.message });
+      results.push({
+        threadUrl,
+        title: p.title,
+        totalPosts: 0,
+        posts: [],
+        error: e.message,
+      });
+    }
+
+    // Rate limiting between threads
+    const delay = hasOAuth() ? 1000 + Math.random() * 1000 : 5000 + Math.random() * 2000;
+    await new Promise((r) => setTimeout(r, delay));
+  }
+
+  // Flatten all posts with global floor numbering
+  let globalFloor = 0;
+  allFlattenedPosts = [];
+  for (const r of results) {
+    for (const post of r.posts) {
+      globalFloor++;
+      allFlattenedPosts.push({ floor: globalFloor, ...post, _threadUrl: r.threadUrl, _threadTitle: r.title });
+    }
+  }
+
+  const totalSuccessfulPosts = results.reduce((sum, r) => sum + r.totalPosts, 0);
+
+  onProgress({
+    taskId, status: 'done',
+    page: allPosts.length, totalPages: allPosts.length,
+    message: `完成！${scrapedCount}/${allPosts.length} 个帖子成功，共 ${totalSuccessfulPosts} 条回复`,
+  });
+
+    return {
+      taskId,
+      source: 'reddit-search',
+      title: subreddit === 'all' ? `Search: ${query} (all Reddit)` : `Search: ${query} in r/${subreddit}`,
+      threadUrl: searchUrl,
+      subreddit,
+      searchQuery: query,
+      totalPages: allPosts.length,
+      totalPosts: totalSuccessfulPosts,
+      matchedThreads: allPosts.length,
+      successfulThreads: scrapedCount,
+      failedThreads: failedThreads.length,
+      posts: allFlattenedPosts,
+      threadResults: results,
+      failedPages: failedThreads.map((f) => f.url),
+    };
+  } catch (error) {
+    if (error.message === 'TASK_CANCELLED') {
+      log.info('Reddit search cancelled, saving partial', { taskId, threads: results.length, posts: allFlattenedPosts.length });
+      return {
+        taskId, source: 'reddit-search',
+        title: subreddit === 'all' ? `Search: ${query} (all Reddit)` : `Search: ${query} in r/${subreddit}`,
+        threadUrl: searchUrl, subreddit, searchQuery: query,
+        totalPages: allPosts.length,
+        totalPosts: allFlattenedPosts.length,
+        matchedThreads: allPosts.length,
+        successfulThreads: scrapedCount,
+        failedThreads: 0,
+        posts: allFlattenedPosts,
+        threadResults: results,
+        failedPages: [],
+        cancelled: true,
+      };
+    }
+    throw error;
+  }
+}
+
+function hasOAuth() {
+  return !!(process.env.REDDIT_CLIENT_ID && process.env.REDDIT_CLIENT_SECRET && oauthToken);
+}
+
+module.exports = { scrapeRedditThread, parseRedditUrl, scrapeRedditSearch, parseRedditSearchUrl };

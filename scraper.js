@@ -157,14 +157,18 @@ async function scrapeThread(threadUrl, onProgress) {
   log.info('=== Starting scrape ===', { url: baseUrl });
   const page = await newPage();
   const taskId = Date.now().toString(36);
+  let title = '';
+  let totalPages = 0;
+  let allPosts = [];
+  let globalFloor = 0;
 
   try {
     onProgress({ taskId, status: 'starting', page: 1, totalPages: '?', message: '正在加载第1页...' });
 
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    const title = await getThreadTitle(page);
-    const totalPages = await getTotalPages(page);
+    title = await getThreadTitle(page);
+    totalPages = await getTotalPages(page);
     log.info(`Thread title: "${title}", total pages: ${totalPages}`);
 
     onProgress({
@@ -172,9 +176,6 @@ async function scrapeThread(threadUrl, onProgress) {
       page: 1, totalPages,
       message: `标题: ${title} | 共 ${totalPages} 页，开始爬取...`,
     });
-
-    const allPosts = [];
-    let globalFloor = 0;
     let failedPages = [];
 
     for (let p = 1; p <= totalPages; p++) {
@@ -237,10 +238,15 @@ async function scrapeThread(threadUrl, onProgress) {
 
     return { taskId, title, threadUrl: baseUrl, totalPages, totalPosts: allPosts.length, posts: allPosts, failedPages };
   } catch (error) {
+    if (error.message === 'TASK_CANCELLED') {
+      log.info('Scrape cancelled, saving partial', { taskId, posts: allPosts.length });
+      try { await page.close(); } catch (_) {}
+      return { taskId, title: title || 'Unknown', threadUrl: baseUrl, totalPages, totalPosts: allPosts.length, posts: allPosts, failedPages, cancelled: true };
+    }
     log.error('Scrape failed', error);
     try { await page.close(); } catch (_) {}
     throw error;
   }
 }
 
-module.exports = { scrapeThread, closeBrowser };
+module.exports = { scrapeThread, closeBrowser, getBrowser, newPage };

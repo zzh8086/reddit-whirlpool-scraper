@@ -3,7 +3,8 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const { scrapeThread } = require('./scraper');
-const { scrapeRedditThread } = require('./sources/reddit');
+const { scrapeRedditThread, scrapeRedditSearch } = require('./sources/reddit');
+const { scrapeProductReviewListing } = require('./sources/productreview');
 const log = require('./logger');
 
 const app = express();
@@ -23,8 +24,14 @@ function sendSSE(res, data) {
 
 // URL source detection
 function detectSource(url) {
+  // Reddit search (subreddit or global)
+  if (/reddit\.com\/(r\/[^/]+\/)?search\b/i.test(url) || /reddit\.com\/r\/[^/]+\/\?q=/i.test(url) || /reddit\.com\/r\/[^/]+\?q=/i.test(url)) {
+    const p = new URL(url).searchParams;
+    if (p.get('q')) return 'reddit-search';
+  }
   if (/reddit\.com\/r\/.+\/comments\//i.test(url)) return 'reddit';
   if (/forums\.whirlpool\.net\.au\/thread\//i.test(url)) return 'whirlpool';
+  if (/productreview\.com\.au\/listings\//i.test(url)) return 'productreview';
   return null;
 }
 
@@ -47,23 +54,29 @@ app.post('/api/scrape', async (req, res) => {
 
   if (!source) {
     log.warn('Invalid URL submitted', { url });
-    return res.status(400).json({ error: '请输入有效的帖子链接（Whirlpool 或 Reddit）' });
+    return res.status(400).json({ error: '请输入有效的帖子链接（Whirlpool / Reddit / ProductReview / Reddit搜索）' });
   }
 
   log.info('Scrape request received', { url, source });
 
   const taskId = Date.now().toString(36);
   const clients = new Set();
-  tasks.set(taskId, { clients, status: 'started' });
+  tasks.set(taskId, { clients, status: 'started', aborted: false });
 
-  const scraper = source === 'reddit' ? scrapeRedditThread : scrapeThread;
+  let scraper;
+  if (source === 'reddit') scraper = scrapeRedditThread;
+  else if (source === 'reddit-search') scraper = scrapeRedditSearch;
+  else if (source === 'productreview') scraper = scrapeProductReviewListing;
+  else scraper = scrapeThread;
 
   res.json({ taskId });
 
   try {
     const result = await scraper(url, (progress) => {
+      const t = tasks.get(taskId);
+      if (t && t.aborted) throw new Error('TASK_CANCELLED');
       progress.taskId = taskId;
-      tasks.get(taskId).lastProgress = progress;
+      t.lastProgress = progress;
       for (const clientRes of clients) {
         sendSSE(clientRes, progress);
       }
@@ -76,6 +89,18 @@ app.post('/api/scrape', async (req, res) => {
     if (source === 'reddit') {
       const slug = slugify(result.title);
       const name = `reddit_${result.subreddit}_${slug}_${result.postId}`;
+      jsonPath = path.join(outDir, `${name}.json`);
+      htmlPath = path.join(outDir, `${name}.html`);
+    } else if (source === 'reddit-search') {
+      const slug = slugify(result.title);
+      const sub = result.subreddit === 'all' ? 'global' : result.subreddit;
+      const name = `reddit-search_${sub}_${slug}_${taskId}`;
+      jsonPath = path.join(outDir, `${name}.json`);
+      htmlPath = path.join(outDir, `${name}.html`);
+    } else if (source === 'productreview') {
+      const slug = slugify(result.title);
+      const shortId = (result.listingId || taskId).substring(0, 8);
+      const name = `productreview_${result.listingSlug}_${slug}_${shortId}`;
       jsonPath = path.join(outDir, `${name}.json`);
       htmlPath = path.join(outDir, `${name}.html`);
     } else {
@@ -99,22 +124,63 @@ app.post('/api/scrape', async (req, res) => {
       htmlPath: `/output/${path.basename(htmlPath)}`,
     };
 
+    const finalStatus = result.cancelled ? 'cancelled' : 'complete';
     for (const clientRes of clients) {
       sendSSE(clientRes, {
         taskId,
-        status: 'complete',
-        message: '爬取完成！',
+        status: finalStatus,
+        message: result.cancelled ? '任务已取消（已爬取部分已保存）' : '爬取完成！',
         result: tasks.get(taskId).result,
       });
       clientRes.end();
     }
   } catch (error) {
-    log.error('Scrape task failed', error);
-    for (const clientRes of clients) {
-      sendSSE(clientRes, { taskId, status: 'error', message: error.message });
-      clientRes.end();
+    if (error.message === 'TASK_CANCELLED') {
+      log.info('Task cancelled, saving partial result', { taskId });
+      // Save partial results if available
+      const partialResult = tasks.get(taskId)?.lastProgress;
+      for (const clientRes of clients) {
+        sendSSE(clientRes, { taskId, status: 'cancelled', message: '任务已取消（已爬取部分已保存）' });
+        clientRes.end();
+      }
+    } else {
+      log.error('Scrape task failed', error);
+      for (const clientRes of clients) {
+        sendSSE(clientRes, { taskId, status: 'error', message: error.message });
+        clientRes.end();
+      }
     }
   }
+});
+
+// API: Cancel a task
+app.post('/api/cancel/:taskId', (req, res) => {
+  let { taskId } = req.params;
+  // Decode URL-encoded taskId (batch IDs contain underscores)
+  taskId = decodeURIComponent(taskId);
+
+  // Check direct match first
+  let task = tasks.get(taskId);
+  if (task) {
+    task.aborted = true;
+    return res.json({ taskId, status: 'cancelling' });
+  }
+
+  // Check if it's a batch sub-task: batchId_index format
+  const lastUnderscore = taskId.lastIndexOf('_');
+  if (lastUnderscore > 0) {
+    const batchId = taskId.substring(0, lastUnderscore);
+    const idx = taskId.substring(lastUnderscore + 1);
+    if (/^\d+$/.test(idx)) {
+      const batch = tasks.get(batchId);
+      if (batch) {
+        batch.aborted = true;
+        return res.json({ taskId, batchId, status: 'cancelling' });
+      }
+    }
+  }
+
+  res.status(404).json({ error: '任务未找到' });
 });
 
 // Helper: run async tasks with concurrency limit
@@ -171,7 +237,7 @@ app.post('/api/scrape-batch', async (req, res) => {
     status: 'pending',
   }));
 
-  tasks.set(batchId, { clients: batchClients, tasks: batchTasks });
+  tasks.set(batchId, { clients: batchClients, tasks: batchTasks, aborted: false });
 
   res.json({ batchId, tasks: batchTasks.map((t) => ({ taskId: t.taskId, url: t.url, source: t.source })) });
 
@@ -185,12 +251,18 @@ app.post('/api/scrape-batch', async (req, res) => {
     task.status = 'scraping';
 
     const broadcast = (data) => {
+      const batch = tasks.get(batchId);
+      if (batch && batch.aborted && data.status !== 'cancelled') throw new Error('TASK_CANCELLED');
       for (const client of batchClients) {
         sendSSE(client, { batchId, taskId: task.taskId, url, source, ...data });
       }
     };
 
-    const scraper = source === 'reddit' ? scrapeRedditThread : scrapeThread;
+    let scraper;
+    if (source === 'reddit') scraper = scrapeRedditThread;
+    else if (source === 'reddit-search') scraper = scrapeRedditSearch;
+    else if (source === 'productreview') scraper = scrapeProductReviewListing;
+    else scraper = scrapeThread;
 
     try {
       const result = await scraper(url, (progress) => {
@@ -208,6 +280,18 @@ app.post('/api/scrape-batch', async (req, res) => {
         const name = `reddit_${result.subreddit}_${slug}_${result.postId}`;
         jsonPath = path.join(outDir, `${name}.json`);
         htmlPath = path.join(outDir, `${name}.html`);
+      } else if (source === 'reddit-search') {
+        const slug = slugify(result.title);
+        const sub = result.subreddit === 'all' ? 'global' : result.subreddit;
+        const name = `reddit-search_${sub}_${slug}_${task.taskId}`;
+        jsonPath = path.join(outDir, `${name}.json`);
+        htmlPath = path.join(outDir, `${name}.html`);
+      } else if (source === 'productreview') {
+        const slug = slugify(result.title);
+        const shortId = (result.listingId || task.taskId).substring(0, 8);
+        const name = `productreview_${result.listingSlug}_${slug}_${shortId}`;
+        jsonPath = path.join(outDir, `${name}.json`);
+        htmlPath = path.join(outDir, `${name}.html`);
       } else {
         const threadId = url.match(/\/thread\/([^?\s]+)/)?.[1] || task.taskId;
         const slug = slugify(result.title);
@@ -219,10 +303,10 @@ app.post('/api/scrape-batch', async (req, res) => {
       fs.writeFileSync(jsonPath, JSON.stringify(result, null, 2), 'utf-8');
       fs.writeFileSync(htmlPath, generateHTML(result), 'utf-8');
 
-      task.status = 'done';
+      task.status = result.cancelled ? 'cancelled' : 'done';
       broadcast({
-        status: 'done',
-        message: `完成：${result.title}（${result.totalPosts} 条内容）`,
+        status: result.cancelled ? 'cancelled' : 'done',
+        message: result.cancelled ? `${result.title}（已取消，已保存 ${result.totalPosts} 条）` : `完成：${result.title}（${result.totalPosts} 条内容）`,
         result: {
           ...result,
           jsonPath: `/output/${path.basename(jsonPath)}`,
@@ -230,9 +314,14 @@ app.post('/api/scrape-batch', async (req, res) => {
         },
       });
     } catch (err) {
-      log.error(`Batch task ${task.taskId} failed`, err);
-      task.status = 'error';
-      broadcast({ status: 'error', message: err.message });
+      if (err.message === 'TASK_CANCELLED') {
+        task.status = 'cancelled';
+        broadcast({ status: 'cancelled', message: '任务已取消' });
+      } else {
+        log.error(`Batch task ${task.taskId} failed`, err);
+        task.status = 'error';
+        broadcast({ status: 'error', message: err.message });
+      }
     }
   });
 
@@ -317,6 +406,8 @@ app.get('/', (_req, res) => {
 
 function generateHTML(data) {
   if (data.source === 'reddit') return generateRedditHTML(data);
+  if (data.source === 'reddit-search') return generateRedditSearchHTML(data);
+  if (data.source === 'productreview') return generateProductReviewHTML(data);
   return generateWhirlpoolHTML(data);
 }
 
@@ -365,6 +456,144 @@ function generateRedditHTML(data) {
 <body>
   <h1>${escapeHTML(data.title)}</h1>
   <div class="meta">r/${escapeHTML(data.subreddit)} | 总内容: ${data.totalPosts} | 页数: ${data.totalPages} | <a href="${escapeHTML(data.threadUrl)}" target="_blank">原帖链接</a></div>
+  ${postsHTML}
+</body>
+</html>`;
+}
+
+function generateProductReviewHTML(data) {
+  const renderStars = (rating) => {
+    const full = Math.round(rating);
+    return '★'.repeat(full) + '☆'.repeat(5 - full);
+  };
+
+  const postsHTML = data.posts
+    .map(
+      (p) => {
+        const sr = p.subRatings;
+        const pi = p.purchaseInfo;
+        let extraHTML = '';
+        // Sub-ratings badges
+        if (sr) {
+          const parts = [];
+          if (sr.buildQuality !== undefined) parts.push(`<span class="sub-rating">品质: ${renderStars(sr.buildQuality)}</span>`);
+          if (sr.valueForMoney !== undefined) parts.push(`<span class="sub-rating">性价比: ${renderStars(sr.valueForMoney)}</span>`);
+          if (sr.noiseLevel !== undefined) parts.push(`<span class="sub-rating">噪音: ${renderStars(sr.noiseLevel)}</span>`);
+          if (parts.length > 0) extraHTML += `<div class="sub-ratings">${parts.join(' ')}</div>`;
+        }
+        // Purchase info
+        if (pi) {
+          const info = [];
+          if (pi.condition) info.push(pi.condition);
+          if (pi.date) info.push('购买日期: ' + escapeHTML(pi.date));
+          if (pi.badge) info.push('型号: ' + escapeHTML(pi.badge));
+          if (pi.year) info.push('年份: ' + escapeHTML(String(pi.year).substring(0, 4)));
+          if (pi.price > 0) info.push('A$' + pi.price.toLocaleString());
+          if (pi.transmission) info.push(pi.transmission);
+          if (info.length > 0) extraHTML += `<div class="purchase-info">${info.join(' | ')}</div>`;
+        }
+        return `
+    <div class="post" id="post-${p.floor}">
+      <div class="post-header">
+        <span class="floor">#${p.floor}</span>
+        <span class="user">${escapeHTML(p.userName)}</span>
+        ${p.verified ? '<span class="verified-badge">已验证购买</span>' : ''}
+        <span class="rating-stars" title="评分: ${p.rating}/5">${renderStars(p.rating)}</span>
+        <span class="date">${escapeHTML(p.date)}</span>
+        ${p.replyId ? `<a class="anchor" href="https://www.productreview.com.au/listings/${escapeHTML(data.listingSlug)}?reviewId=${escapeHTML(p.replyId)}" target="_blank">原文链接</a>` : ''}
+      </div>
+      ${p.reviewTitle ? `<div class="review-title">${escapeHTML(p.reviewTitle)}</div>` : ''}
+      ${extraHTML}
+      <div class="post-body">${escapeHTML(p.content).replace(/\n/g, '<br>')}</div>
+      ${p.helpfulCount > 0 ? `<div class="helpful-count">${p.helpfulCount} 人觉得有帮助</div>` : ''}
+    </div>`;
+      }
+    )
+    .join('\n');
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHTML(data.title)} - ProductReview</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+    h1 { font-size: 20px; margin-bottom: 4px; }
+    .meta { color: #666; font-size: 13px; margin-bottom: 20px; }
+    .meta a { color: #80ba27; }
+    .post { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 10px; border-left: 3px solid #80ba27; }
+    .post-header { display: flex; gap: 12px; align-items: center; margin-bottom: 6px; font-size: 13px; color: #555; flex-wrap: wrap; }
+    .floor { font-weight: 700; color: #999; }
+    .user { font-weight: 600; color: #333; }
+    .verified-badge { background: #80ba27; color: #fff; padding: 1px 6px; border-radius: 3px; font-size: 11px; }
+    .rating-stars { color: #f5a623; font-size: 14px; letter-spacing: 1px; }
+    .date { color: #999; margin-left: auto; }
+    .anchor { color: #80ba27; font-size: 12px; text-decoration: none; }
+    .review-title { font-weight: 600; font-size: 15px; margin-bottom: 6px; color: #333; }
+    .post-body { line-height: 1.7; color: #222; word-break: break-word; }
+    .helpful-count { font-size: 12px; color: #999; margin-top: 8px; }
+    .sub-ratings { display: flex; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
+    .sub-rating { font-size: 12px; color: #f5a623; white-space: nowrap; }
+    .purchase-info { font-size: 12px; color: #888; margin-bottom: 6px; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHTML(data.title)}</h1>
+  <div class="meta">ProductReview.com.au | 平均评分: ${renderStars(data.rating)} (${data.rating}) | 总评价: ${data.totalReviews} | 爬取: ${data.totalPosts} | <a href="${escapeHTML(data.threadUrl)}" target="_blank">原链接</a></div>
+  ${postsHTML}
+</body>
+</html>`;
+}
+
+function generateRedditSearchHTML(data) {
+  const postsHTML = data.posts
+    .map(
+      (p) => `
+    <div class="post ${p.isOP ? 'op' : ''}" id="post-${p.floor}">
+      <div class="post-header">
+        <span class="floor">#${p.floor}</span>
+        <span class="user">${escapeHTML(p.userName)}</span>
+        ${p.isOP ? '<span class="op-badge">楼主</span>' : ''}
+        <span class="score">${p.score !== undefined ? `+${p.score}` : ''}</span>
+        <span class="date">${escapeHTML(p.date)}</span>
+        <span class="thread-ref">[${escapeHTML(p._threadTitle || '').substring(0, 50)}]</span>
+        ${p.shortLink ? `<a class="anchor" href="${escapeHTML(p.shortLink)}" target="_blank">原文链接</a>` : ''}
+      </div>
+      <div class="post-body">${escapeHTML(p.content).replace(/\n/g, '<br>')}</div>
+    </div>`
+    )
+    .join('\n');
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHTML(data.title)}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+    h1 { font-size: 20px; margin-bottom: 4px; }
+    .meta { color: #666; font-size: 13px; margin-bottom: 20px; }
+    .meta a { color: #ff4500; }
+    .post { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 10px; border-left: 3px solid #ddd; }
+    .post.op { border-left-color: #ff4500; }
+    .post-header { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; font-size: 13px; color: #555; flex-wrap: wrap; }
+    .floor { font-weight: 700; color: #999; }
+    .user { font-weight: 600; color: #333; }
+    .op-badge { background: #ff4500; color: #fff; padding: 1px 6px; border-radius: 3px; font-size: 11px; }
+    .score { color: #ff4500; font-weight: 600; }
+    .date { color: #999; }
+    .thread-ref { color: #ff4500; font-size: 11px; font-style: italic; }
+    .anchor { color: #ff4500; font-size: 12px; text-decoration: none; margin-left: auto; }
+    .post-body { line-height: 1.7; color: #222; word-break: break-word; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHTML(data.title)}</h1>
+  <div class="meta">${data.subreddit === 'all' ? 'Reddit全站' : 'r/' + escapeHTML(data.subreddit)} | 匹配帖子: ${data.matchedThreads} | 成功: ${data.successfulThreads} | 总回复: ${data.totalPosts} | <a href="${escapeHTML(data.threadUrl)}" target="_blank">搜索链接</a></div>
   ${postsHTML}
 </body>
 </html>`;

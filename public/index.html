@@ -3,23 +3,116 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Forum Scraper - Whirlpool & Reddit & ProductReview</title>
+  <title>Forum Scraper</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <div class="container">
+    <!-- Status Bar -->
+    <div class="status-bar" id="statusBar">
+      <div class="status-items">
+        <span class="status-dot" id="chromeDot" title="Chrome CDP"></span>
+        <span class="status-label" id="chromeLabel">Chrome</span>
+        <span class="status-dot" id="proxyDot" title="代理"></span>
+        <span class="status-label" id="proxyLabel">代理</span>
+        <span class="status-dot" id="oauthDot" title="Reddit OAuth"></span>
+        <span class="status-label" id="oauthLabel">OAuth</span>
+      </div>
+      <div class="status-actions">
+        <button id="chromeStartBtn" onclick="startChrome()" style="display:none;" title="启动 Chrome">启动 Chrome</button>
+        <button class="btn-settings" onclick="toggleSettings()" title="设置">⚙</button>
+      </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal" style="display:none;">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>设置</h2>
+          <button class="modal-close" onclick="toggleSettings()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>SOCKS5 代理地址 <span class="hint">（中国大陆访问 Reddit 必需）</span></label>
+            <input type="text" id="cfgProxy" placeholder="socks5h://127.0.0.1:7897">
+          </div>
+          <div class="form-group">
+            <label>Reddit Client ID <span class="hint">（可选，提升速率 10→100 QPM）</span></label>
+            <input type="text" id="cfgClientId" placeholder="在 reddit.com/prefs/apps 创建 script 应用获取">
+          </div>
+          <div class="form-group">
+            <label>Reddit Client Secret</label>
+            <input type="password" id="cfgClientSecret" placeholder="OAuth secret">
+          </div>
+          <div class="form-group">
+            <label>Chrome 路径 <span class="hint">（自动检测，可手动修改）</span></label>
+            <input type="text" id="cfgChromePath" placeholder="C:\Program Files\Google\Chrome\Application\chrome.exe">
+          </div>
+          <button class="btn-primary" onclick="saveSettings()">保存设置</button>
+          <span class="save-feedback" id="saveFeedback"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Header -->
     <header>
       <h1>论坛帖子爬取工具</h1>
-      <p>粘贴帖子链接（每行一个），支持 Whirlpool、Reddit（含搜索）、ProductReview，自动识别</p>
+      <p>支持 Whirlpool · Reddit 帖子 · Reddit 搜索 · ProductReview</p>
     </header>
 
-    <div class="input-area">
-      <textarea
-        id="urlInput"
-        placeholder="粘贴帖子链接，每行一个（Whirlpool / Reddit / ProductReview / Reddit搜索 自动识别）&#10;例如：&#10;https://forums.whirlpool.net.au/thread/xxxxx&#10;https://www.reddit.com/r/CarsAustralia/comments/xxxxx/...&#10;https://www.reddit.com/r/CarsAustralia/search?q=toyota+camry&restrict_sr=on&#10;https://www.productreview.com.au/listings/toyota-camry"
-        rows="5"
-      ></textarea>
-      <button id="startBtn" onclick="startScrape()">开始爬取</button>
+    <!-- Input Tabs -->
+    <div class="tabs">
+      <button class="tab active" data-tab="url" onclick="switchTab('url')">📋 粘贴链接</button>
+      <button class="tab" data-tab="search" onclick="switchTab('search')">🔍 Reddit 搜索</button>
+    </div>
+
+    <!-- Tab: URL paste -->
+    <div class="tab-content active" id="tab-url">
+      <div class="input-area">
+        <textarea
+          id="urlInput"
+          placeholder="粘贴帖子链接，每行一个（Whirlpool / Reddit / ProductReview / Reddit搜索 自动识别）
+
+例如：
+https://forums.whirlpool.net.au/thread/3rvj6xr7
+https://old.reddit.com/r/CarsAustralia/comments/abc123/...
+https://old.reddit.com/r/CarsAustralia/search?q=camry&restrict_sr=on
+https://www.productreview.com.au/listings/toyota-camry"
+          rows="5"
+        ></textarea>
+        <button id="startBtn" onclick="startScrape()">开始爬取</button>
+      </div>
+    </div>
+
+    <!-- Tab: Reddit search form -->
+    <div class="tab-content" id="tab-search">
+      <div class="search-form">
+        <div class="search-row">
+          <input
+            type="text"
+            id="searchQuery"
+            placeholder="搜索关键词，如：toyota camry"
+            class="search-input"
+          >
+          <button id="searchBtn" onclick="startSearch()">开始搜索</button>
+        </div>
+        <div class="search-opts">
+          <div class="form-group-inline">
+            <label>版块（可选）</label>
+            <input type="text" id="searchSubreddit" placeholder="留空 = 全站搜索">
+          </div>
+          <div class="form-group-inline">
+            <label>排序</label>
+            <select id="searchSort">
+              <option value="relevance">相关度</option>
+              <option value="hot">热门</option>
+              <option value="top">最佳</option>
+              <option value="new">最新</option>
+              <option value="comments">最多评论</option>
+            </select>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div id="error" class="error-msg"></div>
@@ -41,6 +134,153 @@
     let eventSource = null;
     const $ = (id) => document.getElementById(id);
 
+    // ---- Status bar ----
+
+    async function refreshStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const s = await res.json();
+        updateDot('chromeDot', 'chromeLabel', 'chromeStartBtn', s.chrome.connected, 'Chrome', s.chrome.connected ? '已连接' : '未连接');
+        updateDot('proxyDot', 'proxyLabel', null, s.proxy.configured, '代理', s.proxy.configured ? s.proxy.url : '未配置');
+        updateDot('oauthDot', 'oauthLabel', null, s.oauth.configured, 'OAuth', s.oauth.configured ? '已配置 (100 QPM)' : '未配置 (10 QPM)');
+      } catch (_) {}
+    }
+
+    function updateDot(dotId, labelId, btnId, ok, label, tooltip) {
+      const dot = $(dotId), lbl = $(labelId);
+      if (!dot) return;
+      dot.className = 'status-dot ' + (ok ? 'ok' : 'off');
+      if (lbl) { lbl.textContent = label; lbl.title = tooltip; }
+      if (btnId) {
+        const btn = $(btnId);
+        if (btn) btn.style.display = ok ? 'none' : '';
+      }
+    }
+
+    async function startChrome() {
+      const btn = $('chromeStartBtn');
+      btn.disabled = true;
+      btn.textContent = '...';
+      try {
+        const res = await fetch('/api/chrome/start', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          refreshStatus();
+        } else {
+          showError('Chrome 启动失败，请检查 Chrome 路径设置');
+        }
+      } catch (_) {
+        showError('无法连接服务器');
+      }
+      btn.disabled = false;
+      btn.textContent = '启动 Chrome';
+      refreshStatus();
+    }
+
+    // ---- Settings ----
+
+    function toggleSettings() {
+      const modal = $('settingsModal');
+      const show = modal.style.display === 'none';
+      modal.style.display = show ? 'flex' : 'none';
+      if (show) loadSettings();
+    }
+
+    async function loadSettings() {
+      try {
+        const res = await fetch('/api/config');
+        const cfg = await res.json();
+        $('cfgProxy').value = cfg.SOCKS5_PROXY || '';
+        $('cfgClientId').value = cfg.REDDIT_CLIENT_ID || '';
+        $('cfgClientSecret').value = cfg.REDDIT_CLIENT_SECRET || '';
+        $('cfgChromePath').value = cfg.CHROME_PATH || '';
+      } catch (_) {}
+    }
+
+    async function saveSettings() {
+      const pairs = [
+        ['SOCKS5_PROXY', $('cfgProxy').value.trim()],
+        ['REDDIT_CLIENT_ID', $('cfgClientId').value.trim()],
+        ['REDDIT_CLIENT_SECRET', $('cfgClientSecret').value.trim()],
+        ['CHROME_PATH', $('cfgChromePath').value.trim()],
+      ];
+      try {
+        for (const [key, value] of pairs) {
+          await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key, value }),
+          });
+        }
+        $('saveFeedback').textContent = '✓ 已保存';
+        setTimeout(() => { $('saveFeedback').textContent = ''; }, 2000);
+        refreshStatus();
+      } catch (_) {
+        $('saveFeedback').textContent = '保存失败';
+      }
+    }
+
+    // Close modal on backdrop click
+    $('settingsModal').addEventListener('click', function(e) {
+      if (e.target === this) toggleSettings();
+    });
+
+    // ---- Tabs ----
+
+    function switchTab(name) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.querySelector(`.tab[data-tab="${name}"]`).classList.add('active');
+      document.getElementById('tab-' + name).classList.add('active');
+    }
+
+    // ---- Reddit search form ----
+
+    async function startSearch() {
+      const query = $('searchQuery').value.trim();
+      if (!query) { showError('请输入搜索关键词'); return; }
+      const subreddit = $('searchSubreddit').value.trim();
+      const sort = $('searchSort').value;
+
+      // Reset
+      $('startBtn').disabled = true;
+      $('searchBtn').disabled = true;
+      $('searchBtn').textContent = '搜索中...';
+      $('error').classList.remove('visible');
+      $('tasksArea').innerHTML = '';
+
+      if (eventSource) eventSource.close();
+
+      try {
+        const res = await fetch('/api/search-form', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, subreddit, sort }),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || '请求失败');
+        }
+        const { taskId, searchUrl } = await res.json();
+
+        // Build one task card for this search
+        const cardId = 'task_single';
+        const shortLabel = subreddit ? `r/${subreddit}: ${query}` : `全站: ${query}`;
+        $('tasksArea').innerHTML = buildTaskCard(cardId, searchUrl, 'reddit-search', shortLabel);
+
+        // Store server taskId for stop button
+        const card = document.querySelector('.task-card');
+        if (card) card.setAttribute('data-server-taskid', taskId);
+
+        listenSingle(taskId, cardId);
+      } catch (e) {
+        showError(e.message);
+        resetButtons();
+      }
+    }
+
+    // ---- URL paste scraping ----
+
     async function stopTask(btn) {
       const card = btn.closest('.task-card');
       const serverTaskId = card ? card.getAttribute('data-server-taskid') : '';
@@ -49,9 +289,7 @@
         btn.disabled = true;
         btn.textContent = '...';
         await fetch(`/api/cancel/${encodeURIComponent(serverTaskId)}`, { method: 'POST' });
-      } catch (e) {
-        // ignore
-      }
+      } catch (_) {}
     }
 
     function showError(msg) {
@@ -60,31 +298,35 @@
       setTimeout(() => $('error').classList.remove('visible'), 8000);
     }
 
-    function buildTaskCard(taskId, url, source) {
+    function buildTaskCard(taskId, url, source, labelOverride) {
       let shortUrl;
-      if (/reddit\.com\/search/i.test(url)) {
+      let sourceTag;
+      if (labelOverride) {
+        shortUrl = labelOverride;
+        sourceTag = ' <span style="color:#ff4500;font-size:11px;">Reddit搜索</span>';
+      } else if (/reddit\.com\/search/i.test(url)) {
         const params = new URL(url).searchParams;
         const q = params.get('q') || '';
         shortUrl = `reddit/search?q=${q.substring(0, 20)}`;
+        sourceTag = ' <span style="color:#ff4500;font-size:11px;">Reddit搜索</span>';
       } else if (/reddit\.com\/r\/.+\/search/i.test(url) || /reddit\.com\/r\/[^/]+\?q=/i.test(url)) {
         const m = url.match(/reddit\.com\/r\/([^/]+)/i);
         const params = new URL(url).searchParams;
         const q = params.get('q') || '';
         shortUrl = m ? `r/${m[1]}/search?q=${q.substring(0, 20)}` : url.substring(0, 50) + '...';
+        sourceTag = ' <span style="color:#ff4500;font-size:11px;">Reddit搜索</span>';
       } else if (/reddit\.com\/r\//i.test(url)) {
         const m = url.match(/reddit\.com\/r\/([^/]+)\/comments\/([a-z0-9]+)/i);
         shortUrl = m ? `r/${m[1]}/...${m[2].substring(0, 6)}` : url.substring(0, 50) + '...';
+        sourceTag = ' <span style="color:#ff4500;font-size:11px;">Reddit</span>';
       } else if (/productreview\.com\.au\/listings\//i.test(url)) {
         const m = url.match(/productreview\.com\.au\/listings\/([^/?\s]+)/i);
         shortUrl = m ? `productreview/.../${m[1]}` : url.substring(0, 50) + '...';
+        sourceTag = ' <span style="color:#80ba27;font-size:11px;">ProductReview</span>';
       } else {
         shortUrl = url.replace(/https?:\/\/forums\.whirlpool\.net\.au\/thread\//, '.../');
+        sourceTag = ' <span style="color:#4a90d9;font-size:11px;">Whirlpool</span>';
       }
-      let sourceTag;
-      if (source === 'reddit') sourceTag = ' <span style="color:#ff4500;font-size:11px;">Reddit</span>';
-      else if (source === 'reddit-search') sourceTag = ' <span style="color:#ff4500;font-size:11px;">Reddit搜索</span>';
-      else if (source === 'productreview') sourceTag = ' <span style="color:#80ba27;font-size:11px;">ProductReview</span>';
-      else sourceTag = ' <span style="color:#4a90d9;font-size:11px;">Whirlpool</span>';
       return `
         <div class="task-card" id="card-${taskId}" data-server-taskid="">
           <div class="task-url" title="${escapeHTML(url)}">
@@ -138,7 +380,6 @@
       $('startBtn').textContent = '爬取中...';
       $('error').classList.remove('visible');
 
-      // Close previous SSE
       if (eventSource) eventSource.close();
 
       try {
@@ -154,18 +395,52 @@
         }
 
         const { batchId, tasks } = await res.json();
-        // Map server taskIds to our card taskIds
-        const taskMap = {};
-        tasks.forEach((t, i) => {
-          taskMap[t.taskId] = urls[i];
-        });
-
-        // Store batchId for SSE reconnection reference
         listenBatch(batchId, urls);
       } catch (e) {
         showError(e.message);
-        resetButton();
+        resetButtons();
       }
+    }
+
+    function listenSingle(taskId, cardId) {
+      eventSource = new EventSource(`/api/progress/${taskId}`);
+
+      eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.status === 'complete' || data.status === 'done') {
+          const r = data.result;
+          updateStatus(cardId, `✅ 完成（${r.totalPosts} 条，${r.totalPages} 页）`, 'done');
+          showResult(cardId, r);
+          hideStopButton(cardId);
+          eventSource.close();
+          resetButtons();
+          return;
+        }
+
+        if (data.status === 'cancelled') {
+          updateStatus(cardId, '⏹ 已取消', 'cancelled');
+          hideStopButton(cardId);
+          eventSource.close();
+          resetButtons();
+          return;
+        }
+
+        if (data.status === 'error') {
+          updateStatus(cardId, '❌ ' + data.message, 'error');
+          hideStopButton(cardId);
+          eventSource.close();
+          resetButtons();
+          return;
+        }
+
+        const pct = data.totalPages > 0 ? Math.round((data.page / data.totalPages) * 100) : 0;
+        const fill = document.getElementById(`fill-${cardId}`);
+        if (fill) fill.style.width = pct + '%';
+        updateStatus(cardId, data.message, 'scraping');
+      };
+
+      eventSource.onerror = () => {};
     }
 
     function listenBatch(batchId, urls) {
@@ -173,13 +448,11 @@
 
       const taskCards = {};
       urls.forEach((url, i) => {
-        // Find matching card - the i-th card in the DOM
         const cards = document.querySelectorAll('.task-card');
         if (cards[i]) {
           const cardTaskId = cards[i].id.replace('card-', '');
           const serverTaskId = `${batchId}_${i}`;
           taskCards[serverTaskId] = cardTaskId;
-          // Store server taskId on the card so stop button can use it
           cards[i].setAttribute('data-server-taskid', serverTaskId);
         }
       });
@@ -188,7 +461,7 @@
         const data = JSON.parse(event.data);
 
         if (data.status === 'batch_done') {
-          resetButton();
+          resetButtons();
           eventSource.close();
           return;
         }
@@ -226,16 +499,13 @@
           return;
         }
 
-        // Progress update
         const pct = data.totalPages > 0 ? Math.round((data.page / data.totalPages) * 100) : 0;
         const fill = document.getElementById(`fill-${cardTaskId}`);
         if (fill) fill.style.width = pct + '%';
         updateStatus(cardTaskId, data.message, 'scraping');
       };
 
-      eventSource.onerror = () => {
-        // Connection lost — will retry automatically
-      };
+      eventSource.onerror = () => {};
     }
 
     function hideStopButton(cardTaskId) {
@@ -265,9 +535,11 @@
         </div>`;
     }
 
-    function resetButton() {
+    function resetButtons() {
       $('startBtn').disabled = false;
       $('startBtn').textContent = '开始爬取';
+      $('searchBtn').disabled = false;
+      $('searchBtn').textContent = '开始搜索';
     }
 
     async function loadLogs() {
@@ -286,16 +558,22 @@
       }
     }
 
+    function escapeHTML(str) {
+      if (!str) return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // ---- Init ----
+    refreshStatus();
+    setInterval(refreshStatus, 15000);
     loadLogs();
 
     $('urlInput').addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && e.ctrlKey) startScrape();
     });
-
-    function escapeHTML(str) {
-      if (!str) return '';
-      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
+    $('searchQuery').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') startSearch();
+    });
   </script>
 </body>
 </html>

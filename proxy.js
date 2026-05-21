@@ -1,5 +1,6 @@
 const https = require('https');
 const { SocksProxyAgent } = require('socks-proxy-agent');
+const { redditLimiter } = require('./rate-limiter');
 const log = require('./logger');
 
 let agent = null;
@@ -25,7 +26,9 @@ function getProxyAgent() {
   }
 }
 
-function fetchRedditJSON(url) {
+async function fetchRedditJSON(url) {
+  await redditLimiter.acquire();
+
   return new Promise((resolve, reject) => {
     const proxyAgent = getProxyAgent();
     const parsedUrl = new URL(url);
@@ -119,4 +122,9 @@ function fetchRedditJSON(url) {
   });
 }
 
-module.exports = { getProxyAgent, fetchRedditJSON };
+function resetProxyAgent() {
+  agent = null;
+  agentWarned = false;
+}
+
+module.exports = { getProxyAgent, resetProxyAgent, fetchRedditJSON };

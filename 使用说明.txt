@@ -1,267 +1,362 @@
 ================================================================================
-  Forum Scraper — Whirlpool & Reddit 论坛爬虫使用说明
+  Forum Scraper — 论坛爬虫工具 使用说明
+  版本: 1.0 | 更新: 2026-05-21
 ================================================================================
 
-一、功能概述
---------------------------------------------------------------------------------
-  粘贴帖子链接（每行一个），自动识别 Whirlpool / Reddit，爬取全部楼层内容，
-  输出 JSON + HTML 文件到 output/ 目录。提供 Web UI 实时查看进度。
+  支持 Whirlpool · Reddit 帖子 · Reddit 搜索 · ProductReview 四种数据源
+  自动识别、批量爬取、Web UI 实时进度、JSON + HTML 双格式输出
 
+================================================================================
+  一、快速开始
+================================================================================
 
-二、环境要求
---------------------------------------------------------------------------------
-  - Node.js (>=18)
-  - npm
-  - 依赖安装：npm install
+  1. 确保已安装 Node.js（https://nodejs.org，版本 ≥18）
+  2. 在项目目录下运行：
+       npm install       （仅首次需要）
+       node server.js
+  3. 浏览器打开 http://localhost:3000
 
-  Whirlpool（额外要求）：
-    - Windows 系统
-    - Chrome 浏览器
+  服务器会自动检测并启动 Chrome，顶部状态栏实时显示各项状态。
+  所有配置（代理、OAuth 等）在 Web UI 设置面板中完成，无需编辑文件。
 
-  Reddit（额外要求）：
-    - 代理工具（Clash Verge / Shadowsocks / VPN）
-    - 美国或欧洲出口节点（香港/新加坡节点会被 Reddit 拦截）
+================================================================================
+  二、Web UI 界面说明
+================================================================================
 
+  ┌──────────────────────────────────────────────────────┐
+  │ ● Chrome 已连接  ● 代理 已配置  ● OAuth 已配置   ⚙  │ ← 状态栏
+  ├──────────────────────────────────────────────────────┤
+  │ [📋 粘贴链接]  [🔍 Reddit 搜索]                      │ ← Tab
+  ├──────────────────────────────────────────────────────┤
+  │  输入框 / 搜索表单                        [开始爬取]  │ ← 输入区
+  ├──────────────────────────────────────────────────────┤
+  │  任务卡片：进度条 + 状态 + 停止按钮 + 结果链接        │ ← 结果区
+  └──────────────────────────────────────────────────────┘
 
-三、快速开始
---------------------------------------------------------------------------------
+  状态栏：
+    ● 绿色 = 已连接/已配置    ● 灰色 = 未连接/未配置
+    OAuth 灰色 = 10 次/分钟；绿色 = 100 次/分钟
+    如 Chrome 未连接，状态栏出现「启动 Chrome」按钮
 
-  【Whirlpool 帖子】
-  1. 双击运行 start-chrome.bat（会自动打开一个 Chrome 窗口）
-  2. 在新开的 Chrome 中访问 https://forums.whirlpool.net.au
-     （如果出现 Cloudflare 人机验证，手动完成）
-  3. 运行：node server.js
-  4. 浏览器打开 http://localhost:3000
+  齿轮按钮 ⚙：
+    打开设置面板，配置代理、OAuth、Chrome 路径。保存即时生效。
 
-  【Reddit 帖子】
-  1. 启动你的代理工具（如 Clash Verge），切换到美国/欧洲节点
-  2. 查看代理端口：Clash Verge → 设置 → Mixed Port（默认 7897）
-  3. 复制 .env.example 为 .env，修改 SOCKS5_PROXY 为你的端口：
-       SOCKS5_PROXY=socks5h://127.0.0.1:7897
-  4. 运行：node server.js
-  5. 浏览器打开 http://localhost:3000
+================================================================================
+  三、各数据源使用方法
+================================================================================
 
-  【同时使用两种】
-  先做 Whirlpool 的步骤 1-2，再做 Reddit 的步骤 1-3，然后 node server.js。
-  两种爬虫互不干扰，可在同一个界面混搭使用。
+  3.1 粘贴链接（URL Tab）—— 通用方式
 
+    适用：Whirlpool | Reddit 帖子 | Reddit 搜索 | ProductReview
 
-四、Web UI 使用
---------------------------------------------------------------------------------
-  1. 在文本框中粘贴帖子链接，每行一个，例如：
-       https://forums.whirlpool.net.au/thread/xxxxx
-       https://www.reddit.com/r/CarsAustralia/comments/xxxxx/帖子标题/
-       https://old.reddit.com/r/electricvehicles/comments/yyyyy/
+    将链接粘贴到文本框（每行一个），点击「开始爬取」。
+    系统自动识别链接类型并调度爬取任务（最多 3 个并发）。
 
-  2. 点击"开始爬取"按钮
+    支持的链接格式：
+      Whirlpool:
+        https://forums.whirlpool.net.au/thread/3rvj6xr7
 
-  3. 每个链接显示为一张进度卡片，实时显示：
-     - 进度条（百分比）
-     - 当前状态文字（连接中 → 爬取中第X页 → 完成）
-     - 完成后显示标题 + 下载链接（HTML / JSON）
+      Reddit 帖子:
+        https://old.reddit.com/r/CarsAustralia/comments/abc123/...
+        https://www.reddit.com/r/CarsAustralia/comments/abc123/...
 
-  4. 支持批量：一次粘贴多个链接，最多同时跑 3 个任务
+      Reddit 搜索（可识别自动构建的搜索 URL）:
+        https://old.reddit.com/r/CarsAustralia/search?q=camry&restrict_sr=on
+        https://old.reddit.com/search?q=camry
 
-  5. 快捷键：Ctrl + Enter 开始爬取
+      ProductReview:
+        https://www.productreview.com.au/listings/toyota-camry
 
+  3.2 Reddit 搜索（搜索 Tab）—— 免拼接 URL
 
-五、配置文件 .env
---------------------------------------------------------------------------------
-  初次使用请复制 .env.example 为 .env，按需修改：
+    点击「Reddit 搜索」标签页：
+      1. 输入搜索关键词（如 toyota camry）
+      2. 版块（可选）：留空 = 全站搜索，填入 = 限定子版块
+      3. 排序方式：相关度 / 热门 / 最佳 / 最新 / 最多评论
+      4. 点击「开始搜索」
 
-  SOCKS5_PROXY=socks5h://127.0.0.1:7897
-    → SOCKS5 代理地址。Clash Verge 用户填 Mixed Port。
-      不配此项 Reddit 请求会直接超时（大陆网络无法直连 Reddit）
+    系统自动构建搜索 URL，搜索结果中的每个帖子都会被抓取，
+    最终合并输出为一份数据文件。
 
-  REDDIT_CLIENT_ID=
-  REDDIT_CLIENT_SECRET=
-    → 可选。在 https://www.reddit.com/prefs/apps 创建 "script" 应用获取。
-      填写后速率限制从 10次/分钟 提升到 100次/分钟。
-      不填也能正常使用，只是大帖子爬得慢一些。
+  3.3 操作提示
 
-  REDDIT_USER_AGENT=ForumScraper/1.0
-    → Reddit 要求的 User-Agent 标识，一般不用改。
+    - 批量粘贴：一次可粘贴多条不同来源的链接，互不干扰
+    - 停止按钮：每张任务卡片右上角 ✕，点击取消当前任务（已爬取部分会保存）
+    - 结果下载：任务完成后显示 HTML / JSON 链接，点击打开或右键另存
+    - 快捷键：Ctrl+Enter 开始粘贴链接，Enter 开始搜索
 
+================================================================================
+  四、设置面板说明
+================================================================================
 
-六、JSON 输出数据结构
---------------------------------------------------------------------------------
+  点击顶部 ⚙ 齿轮图标打开。所有设置保存后即时生效，无需重启。
 
-  【顶层字段对比】
+  SOCKS5 代理地址
+    中国大陆访问 Reddit 必需。格式：socks5h://127.0.0.1:7897
+    端口号根据代理工具设置填写（Clash Verge：设置 → 端口 → Mixed Port，默认 7897）
 
-  字段          Whirlpool        Reddit           说明
-  ──────────────────────────────────────────────────
-  taskId        ✓                ✓                任务唯一标识
-  source        ✗                ✓ ("reddit")     数据来源（Whirlpool 无此字段）
-  title         ✓                ✓                帖子标题
-  threadUrl     ✓                ✓                帖子原始链接
-  subreddit     ✗                ✓                Reddit 子版块名
-  postId        ✗                ✓                Reddit 帖子 ID
-  score         ✗                ✓                帖子总赞数
-  url           ✗                ✓                Reddit 原始 URL
-  totalPages    ✓                ✓                总页数
-  totalPosts    ✓                ✓                总内容条数
-  posts         ✓                ✓                内容数组（见下方）
-  failedPages   ✓                ✓                失败的页码列表
+  Reddit Client ID / Client Secret
+    可选。配置后 Reddit 速率从 10 次/分钟 提升到 100 次/分钟。
+    获取方式见第五节。
 
+  Chrome 路径
+    通常自动检测，无需手动填写。如果状态栏 Chrome 始终「未连接」，
+    手动填入 Chrome 的完整路径：
+      C:\Program Files\Google\Chrome\Application\chrome.exe
+      C:\Program Files (x86)\Google\Chrome\Application\chrome.exe
 
-  【posts[] 数组字段对比】
+================================================================================
+  五、Reddit OAuth 配置（可选提速 10 倍）
+================================================================================
 
-  字段          Whirlpool        Reddit           说明
-  ──────────────────────────────────────────────────
-  floor         ✓                ✓                楼层编号（从 1 开始递增）
-  userName      ✓                ✓                用户名
-  userId        ✓（真实值）       ✓（空字符串）     Whirlpool 内部用户 ID
-  postCount     ✓（真实值）       ✓（空字符串）     用户历史发帖总数
-  date          ✓                ✓                发布时间（ISO 8601 格式）
-  content       ✓                ✓                内容正文（纯文本）
-  isOP          ✓                ✓                是否为楼主
-  shortLink     ✓                ✓                该条回复的短链接
-  replyId       ✓                ✓                回复唯一标识
-  score         ✗                ✓                该条回复的赞数
+  为什么配置？
+    未认证 → 10 次/分钟（10 QPM）  → 每个请求间隔 6 秒
+    OAuth   → 100 次/分钟（100 QPM）→ 每个请求间隔 0.6 秒
+    对 Reddit 搜索效果明显：搜到 50 个帖子无 OAuth 要等 5 分钟，有 OAuth 仅 30 秒。
 
+  获取步骤：
+    1. 访问 https://old.reddit.com/prefs/apps
+    2. 拉到页面底部，点击「create an app」
+    3. 填写：
+       - name：随便起，如 forum-scraper
+       - type：选择「script」
+       - redirect uri：填 http://localhost:8080
+       - about url / description：留空
+    4. 点击「create app」
+    5. 创建成功后：app 名字下方的乱码 = Client ID；secret = Client Secret
+    6. 填入设置面板，保存
 
-  【关键区别总结】
-  1. Reddit 顶层多了 source / subreddit / postId / score / url 字段
-  2. userId 和 postCount 在 Reddit 数据中为空（Reddit JSON API 不提供）
-  3. Reddit 每条回复多了 score 字段（获赞数）
-  4. 其余字段完全一致，两个来源的数据可以直接放一起处理
+  常见问题：
+    - 点击 create app 没反应？→ Reddit 可能要求先同意政策页面。
+      点进提示的链接，滑到底部看有无 Accept/Agree 按钮。
+    - 新页面始终不行？→ 改用旧版页面 old.reddit.com/prefs/apps。
+    - 即使不配 OAuth 也能正常使用，只是速度较慢。
 
+================================================================================
+  六、各数据源详情与注意事项
+================================================================================
 
-七、Reddit 速率限制与已知限制
---------------------------------------------------------------------------------
-  - 未认证（默认）：每分钟 10 次请求，每条请求间隔 6 秒
-  - OAuth 认证（配了 CLIENT_ID）：每分钟 100 次，间隔 0.6 秒
-  - Reddit API 最多返回 1000 条评论，超出的部分无法获取
-  - 被限流（429）会自动等待后重试一次
-  - 代理 IP 被 Reddit 标记时返回 403，需切换节点
-  - 请求头不要加 Accept: application/json，会触发反爬
+  6.1 Whirlpool（CDP 浏览器方式）
 
+    工作原理：通过 Chrome DevTools Protocol 操控浏览器，模拟真实用户访问。
 
-八、Whirlpool 注意事项
---------------------------------------------------------------------------------
-  - 必须先运行 start-chrome.bat，否则 CDP 连接失败
-  - Chrome 中必须访问过一次 Whirlpool 并完成 Cloudflare 验证
-  - 爬取时不要关闭那个 Chrome 窗口
-  - 如果 Whirlpool 改版导致提取不到内容，运行 node debug.js 分析新结构
-  - 页间有 1-3 秒随机延迟，模拟人工浏览
+    首次使用：
+      程序自动打开的 Chrome 窗口访问 Whirlpool 时，可能弹出 Cloudflare 验证。
+      在 Chrome 中点一下"我是人类"，之后不再需要（Chrome 会记住验证状态）。
 
+    注意：
+      - 爬虫 Chrome 和你日常 Chrome 是两个独立窗口，互不影响
+      - 爬虫 Chrome 没有你的书签、密码、插件（这是设计如此）
+      - 不要关闭爬虫 Chrome 窗口，否则爬取会失败
+      - 如果关了，在 Web UI 状态栏点「启动 Chrome」即可恢复
 
-九、日志
---------------------------------------------------------------------------------
-  所有运行日志写入 logs/scraper-YYYY-MM-DD.log。
-  包含每次 HTTP 请求的 URL、状态码、耗时、数据量，以及所有错误详情。
-  调试时可用文本编辑器实时查看，或 tail -f logs/scraper-*.log。
+  6.2 Reddit（HTTP JSON API + 代理）
 
+    工作原理：直接调用 Reddit 的 JSON API，不走浏览器。
 
-十、常见问题
---------------------------------------------------------------------------------
-  Q: 点"开始爬取"后报"Cannot connect to proxy"
-  A: 检查 Clash/VPN 是否已启动，.env 中 SOCKS5_PROXY 端口号是否正确
+    前置条件：
+      - 代理工具（Clash/VPN）已启动，节点选美国或欧洲
+      - 在设置面板中填入正确的 SOCKS5 代理端口
+
+    速率限制：
+      - 无 OAuth：10 次/分钟
+      - 有 OAuth：100 次/分钟
+      - 全局速率限制器自动协调并发任务，不会触发 429
+      - 同时爬多条 Reddit 时，单条速度等比下降（总量固定）
+      - Reddit 搜索最多翻 5 页（约 500 条结果）
+      - Reddit 帖子 API 最多返回 1000 条评论
+
+  6.3 ProductReview（CDP + 浏览器内 API）
+
+    工作原理：通过 Chrome CDP 在 ProductReview 页面内调用其内部 API，
+    继承浏览器的 Cloudflare cookies 来通过验证。
+
+    首次使用：
+      同 Whirlpool，在 Chrome 中完成一次 Cloudflare 点击验证。
+
+    数据特性：
+      - 包含评分（rating）、子评分（品质/性价比/噪音等）
+      - 包含购买信息（价格/日期/车型/变速箱/新旧状态）
+      - 包含规格参数（specificationValues，所有字段以标签名索引）
+
+    已知限制：
+      - 第 5 页起可能 403（约能抓到前 400/416 条评价）
+      - 这是 Cloudflare 对 API 请求的限流，非爬虫 bug
+
+  6.4 Reddit 搜索
+
+    工作原理：先用搜索 API 找到匹配帖子列表，再逐个爬取每个帖子的全部评论。
+
+    数据特性：
+      - 每条回复附带 _threadUrl 和 _threadTitle 标明来源帖子
+      - 顶层包含 matchedThreads（匹配数）和 successfulThreads（成功数）
+      - 搜索结果中的帖子按搜索排序顺序依次爬取
+
+================================================================================
+  七、输出说明
+================================================================================
+
+  7.1 文件位置与命名
+
+    所有结果保存在 output/ 目录，每种数据源命名规则不同：
+
+    Whirlpool          thread_<标题>_<threadId>.json / .html
+    Reddit 帖子         reddit_<版块>_<标题>_<postId>.json / .html
+    Reddit 搜索         reddit-search_<版块>_<标题>_<taskId>.json / .html
+    ProductReview      productreview_<slug>_<标题>_<listingId前8位>.json / .html
+
+  7.2 JSON 数据结构
+
+    通用字段（所有来源都有）：
+      floor     — 楼层编号（从 1 递增）
+      userName  — 用户名
+      userId    — 用户 ID（Reddit 为空）
+      postCount — 历史发帖数（Reddit 为空）
+      date      — 发布时间（ISO 8601）
+      content   — 正文内容（纯文本）
+      isOP      — 是否为楼主
+      shortLink — 回复链接
+      replyId   — 回复 ID
+
+    Reddit 额外字段：score（获赞数）
+    ProductReview 额外字段：rating, reviewTitle, verified, helpfulCount,
+      subRatings（品质/性价比/噪音），purchaseInfo（购买信息），
+      specificationValues（所有规格参数）
+    Reddit 搜索额外字段：_threadUrl, _threadTitle（每条回复附来源帖子信息）
+
+  7.3 HTML 输出
+
+    每个 JSON 文件对应一个 HTML 文件，可直接在浏览器中查看，
+    带有基本排版样式，适合快速浏览和分享。
+
+================================================================================
+  八、架构说明（供开发者/维护者参考）
+================================================================================
+
+  server.js            Express 服务器，路由分发，HTML 生成
+  scraper.js           Whirlpool CDP 爬虫
+  sources/reddit.js    Reddit 帖子 + 搜索爬虫（OAuth 支持）
+  sources/productreview.js  ProductReview 爬虫
+  chrome-manager.js    Chrome 生命周期管理（自动启动/检测）
+  config.js            运行时配置管理（config.json ↔ .env）
+  rate-limiter.js      全局速率限制器（令牌桶，并发安全）
+  proxy.js             SOCKS5 代理工厂 + fetchRedditJSON
+  logger.js            按日文件日志
+  public/index.html    Web UI（状态栏 + 设置面板 + Tab + 搜索表单）
+  public/style.css     UI 样式
+  debug.js             Whirlpool 页面结构分析工具
+  config.json          运行时配置（Web UI 生成，用户特定）
+
+================================================================================
+  九、常见问题排查
+================================================================================
+
+  【服务器相关】
+
+  Q: 启动报错 EADDRINUSE port 3000
+  A: 端口被占用。PowerShell 执行：
+     Get-NetTCPConnection -LocalPort 3000 | ForEach-Object {
+       Stop-Process -Id $_.OwningProcess -Force
+     }
+
+  【Chrome / CDP 相关】
+
+  Q: 状态栏 Chrome 灰色"未连接"
+  A: 点击「启动 Chrome」。如果仍失败：
+     1. 检查设置面板中的 Chrome 路径是否正确
+     2. 手动运行 start-chrome.bat（传统备用方式）
+     3. 检查 9222 端口是否被其他程序占用
+
+  Q: Chrome 窗口弹出来了但 Whirlpool/ProductReview 爬取失败
+  A: 需要在 Chrome 中完成一次 Cloudflare 验证。
+     爬虫自动打开的标签页中，如果看到"Verify you are human"，
+     点一下即可。之后自动继续。
+
+  【Reddit / 代理相关】
+
+  Q: Reddit 返回"Cannot connect to proxy"
+  A: 1. Clash/VPN 是否已启动？
+     2. 设置面板中 SOCKS5 代理端口是否与代理工具一致？
+     3. Clash Verge 用户确认 Mixed Port（设置 → 端口）
 
   Q: Reddit 返回 403 Blocked
-  A: 当前代理节点被 Reddit 标记。在 Clash Verge 中切换到美国/欧洲节点再试
+  A: 代理 IP 被 Reddit 标记。切换到美国或欧洲节点。
+     （香港/新加坡节点常被 Reddit 拦截）
+
+  Q: Reddit 返回 429 Rate Limited
+  A: 正常速率限制。全局速率限制器会自动排队等待，稍后会恢复。
+     如果频繁遇到，配置 OAuth（见第五节）。
 
   Q: Reddit 返回 404
-  A: 帖子链接不对，或者帖子已被删除/设为私密
+  A: 帖子链接无效，或帖子已删除/私有。
 
-  Q: Reddit 等待很久/超时
-  A: 未配置代理或代理节点不可用。确认 curl.exe -x socks5h://127.0.0.1:7897
-     https://old.reddit.com/r/CarsAustralia/.json 能否返回 200
+  【爬取结果相关】
 
   Q: Whirlpool 提取到 0 条内容
-  A: Chrome 可能没完成 Cloudflare 验证。在 Chrome 中刷新 Whirlpool 页面，确认
-     能正常看到帖子内容后，再运行 node server.js
+  A: 论坛可能改版导致选择器失效。运行 node debug.js 重新分析。
 
-  Q: Whirlpool 报"无法连接到 Chrome"
-  A: 确保 start-chrome.bat 已运行且 Chrome 窗口还在。检查端口 9222 是否被占用
+  Q: ProductReview 结果为 0 条
+  A: 检查 Chrome 标签页中 ProductReview 是否能正常打开。
+     查看命令行日志中的 API 返回结构诊断信息。
+     Cloudflare session 可能过期，刷新 productreview.com.au 页面。
 
+  Q: ProductReview 第 5 页后报错
+  A: Cloudflare 限流，这是已知限制。约 400/416 条被正常抓取，
+     丢失的是最后十几条。暂时无解，可通过分批次爬取缓解。
 
-十一、数据格式说明（供 AI 分析使用）
+  Q: 停止按钮点击后无反应
+  A: 浏览器缓存了旧版 JS。硬刷新页面（Ctrl+Shift+R）。
+
+================================================================================
+  十、日志
 ================================================================================
 
-  以下内容可直接复制粘贴给 AI 工具，用于后续市场分析、产品调研等任务。
+  所有运行日志写入 logs/scraper-YYYY-MM-DD.log，包含：
+    - 每次 HTTP 请求的 URL、状态码、耗时、数据量
+    - 每页爬取的进度
+    - 所有错误详情及堆栈
 
---------------------------------------------------------------------------------
+  Web UI 页面底部可展开日志区域直接查看今日日志（最后 100 行）。
 
-  本爬虫可从 Whirlpool 论坛和 Reddit 抓取帖子数据，输出 JSON 文件。
-  两种来源的数据已统一为相同的 posts[] 结构，可直接合并分析。
+================================================================================
+  十一、数据格式摘要（供 AI 分析用）
+================================================================================
 
-  【JSON 顶层结构】
-
-  {
-    "taskId":       "任务唯一标识（字符串）",
-    "source":       "数据来源：'reddit' | 不存在（Whirlpool）",
-    "title":        "帖子标题",
-    "threadUrl":    "帖子原始链接",
-    "subreddit":    "仅 Reddit：所属子版块名称，如 'CarsAustralia'",
-    "postId":       "仅 Reddit：帖子唯一 ID",
-    "score":        "仅 Reddit：帖子获赞总数",
-    "url":          "仅 Reddit：old.reddit.com 原始 URL",
-    "totalPages":   "爬取的页数",
-    "totalPosts":   "总内容条数（含楼主正文 + 所有回复）",
-    "posts":        "内容数组，见下方",
-    "failedPages":  "抓取失败的页码列表（通常为空）"
-  }
-
-  【posts[] 数组 — 每条内容的结构】
-
-  {
-    "floor":       "楼层编号，从 1 开始递增。1 = 楼主正文（Reddit）或首条回复（Whirlpool）",
-    "userName":    "用户名（昵称）",
-    "userId":      "仅 Whirlpool：用户内部 ID 数字。Reddit 此项为空字符串",
-    "postCount":   "仅 Whirlpool：该用户历史发帖总数。Reddit 此项为空字符串",
-    "date":        "发布时间，ISO 8601 格式（如 2026-03-27T06:13:51.000Z）",
-    "content":     "正文内容（纯文本，已去除 HTML 标签）",
-    "isOP":        "Boolean，是否为楼主（原帖作者）",
-    "shortLink":   "该条回复的直接链接",
-    "replyId":     "回复唯一标识符",
-    "score":       "仅 Reddit：该条回复的获赞数。Whirlpool 无此字段"
-  }
-
-  【两种数据源的实际差异】
-
-  1. floor=1 的含义不同：
-     - Reddit：floor=1 是楼主的帖子正文（selftext），如果原帖正文为空则没有 floor=1，
-       第一条回复从 floor=2 开始
-     - Whirlpool：floor=1 是第一条回复，没有单独的"楼主正文"
-
-  2. userId / postCount 仅在 Whirlpool 中有值：
-     - userId 可用于判断哪些用户是活跃用户（发帖量大）
-     - Reddit 这两项始终为空字符串，分析时需跳过
-
-  3. score 仅在 Reddit 中有值：
-     - 可反映每条回复的认可度（社区投票）
-     - Whirlpool 无此字段，如需对等内容可忽略或用楼层顺序代替
-
-  4. 顶层 source 字段：
-     - Reddit 数据有此字段，值为 "reddit"
-     - Whirlpool 数据没有此字段
-     - 合并分析时，可用该字段是否存在来区分来源
-
-  【用于市场/产品分析的关键字段】
-
-  - content：用户真实发言，最核心的分析素材。可做情感分析、需求提取、
-    竞品提及、痛点识别、使用场景归纳
-  - date：时间维度，可用于趋势分析、季节性判断
-  - isOP：区分楼主和回复者，分析楼主提问动机 vs 社区反馈
-  - score（Reddit）：识别高价值/高共识的观点
-  - postCount（Whirlpool）：识别资深用户，其观点权重可能更高
-  - subreddit / threadUrl：追溯数据来源上下文
-
-  【给 AI 的分析提示示例】
-
-  你可以将以下 prompt 连同 JSON 数据一起发给 AI：
+  以下可直接复制给 AI 工具进行市场分析、产品调研等。
 
   ---
-  "以下是来自 {论坛名称} 的帖子数据。请帮我完成以下分析：
-  1. 提取所有用户提到的产品名称和品牌
-  2. 总结用户的核心痛点和需求
-  3. 按情感（正面/负面/中立）分类每条回复
-  4. 找出讨论热度最高的话题（被多个人提及的主题）
-  5. 识别资深用户（发帖量高或获赞数高）的观点，单独列出
-  数据格式说明：每条回复包含 floor（楼层）、userName（用户名）、
-  content（正文）、isOP（是否为楼主）、date（时间）。
-  {如有 score 字段则为 Reddit 数据}请用中文输出分析结果。"
+  本爬虫可从 Whirlpool/Reddit/ProductReview 抓取帖子数据，输出 JSON 文件。
+  所有来源的数据统一为相同的 posts[] 结构。
+
+  JSON 顶层：
+    source     — 数据来源：'reddit' | 'reddit-search' | 'productreview' | 不存在(Whirlpool)
+    title      — 标题
+    threadUrl  — 原始链接
+    totalPages — 页数
+    totalPosts — 总条目数
+    posts[]    — 内容数组
+
+  posts[] 每条：
+    floor     — 楼层（1 起始）
+    userName  — 用户名
+    date      — 时间（ISO 8601）
+    content   — 正文（纯文本）
+    isOP      — 是否楼主
+    score     — 仅 Reddit：获赞数
+    rating    — 仅 ProductReview：评分（1-5）
+
+  分析建议 prompt：
+  "以下是来自 {来源} 的帖子数据。请帮我：
+   1. 提取用户提到的产品和品牌
+   2. 总结核心痛点和需求
+   3. 按情感分类每条回复
+   4. 找出讨论热度最高的话题
+   {ProductReview 数据额外关注评分与购买信息的关联}"
   ---
 
-  将 {论坛名称} 替换为实际论坛名，{如有...} 根据数据来源决定是否保留。
+================================================================================
+  免责声明
+================================================================================
+
+  本工具仅供产品市场分析使用。请遵守各网站的使用条款。
+  不得用于任何违法或侵犯他人权益的目的。

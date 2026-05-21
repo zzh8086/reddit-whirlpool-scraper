@@ -5,6 +5,8 @@ const fs = require('fs');
 const { scrapeThread } = require('./scraper');
 const { scrapeRedditThread, scrapeRedditSearch } = require('./sources/reddit');
 const { scrapeProductReviewListing } = require('./sources/productreview');
+const { ensureChrome, getChromeStatus, restartChrome, refreshStatus } = require('./chrome-manager');
+const config = require('./config');
 const log = require('./logger');
 
 const app = express();
@@ -46,6 +48,118 @@ function slugify(title) {
     .substring(0, 50)
     .trim() || 'untitled';
 }
+
+// API: System status
+app.get('/api/status', async (_req, res) => {
+  const chrome = await refreshStatus();
+  const proxy = config.get('SOCKS5_PROXY') || '';
+  const hasOAuth = !!(config.get('REDDIT_CLIENT_ID') && config.get('REDDIT_CLIENT_SECRET'));
+  res.json({
+    chrome: { connected: chrome.connected, browser: chrome.browser || '' },
+    proxy: { configured: !!proxy, url: proxy.replace(/:\/\/.*@/, '://***@') || '' },
+    oauth: { configured: hasOAuth },
+    serverStartTime: new Date().toISOString(),
+  });
+});
+
+// API: Get config (safe version for UI)
+app.get('/api/config', (_req, res) => {
+  res.json(config.getAllSafe());
+});
+
+// API: Update config
+app.post('/api/config', (req, res) => {
+  const { key, value } = req.body;
+  if (!key) return res.status(400).json({ error: 'Missing key' });
+  config.set(key, value || '');
+  log.info('Config updated', { key, value: value ? '(set)' : '(cleared)' });
+  res.json({ ok: true, config: config.getAllSafe() });
+});
+
+// API: Start/restart Chrome
+app.post('/api/chrome/start', async (_req, res) => {
+  const status = await restartChrome();
+  res.json({ ok: status.connected, chrome: status });
+});
+
+// API: Reddit search — build URL from form fields, dispatch as normal scrape
+app.post('/api/search-form', async (req, res) => {
+  const { query, subreddit, sort } = req.body;
+  if (!query || !query.trim()) {
+    return res.status(400).json({ error: '请输入搜索关键词' });
+  }
+  const q = encodeURIComponent(query.trim());
+  const s = sort || 'relevance';
+  let searchUrl;
+  if (subreddit && subreddit.trim()) {
+    const sub = subreddit.trim();
+    searchUrl = `https://old.reddit.com/r/${sub}/search?q=${q}&restrict_sr=on&sort=${s}&limit=100`;
+  } else {
+    searchUrl = `https://old.reddit.com/search?q=${q}&sort=${s}&limit=100`;
+  }
+  log.info('Search form → URL', { query, subreddit: subreddit || 'all', sort: s, url: searchUrl });
+
+  // Run the same scrape flow as /api/scrape
+  const taskId = Date.now().toString(36);
+  const clients = new Set();
+  tasks.set(taskId, { clients, status: 'started', aborted: false });
+
+  res.json({ taskId, searchUrl });
+
+  try {
+    const result = await scrapeRedditSearch(searchUrl, (progress) => {
+      const t = tasks.get(taskId);
+      if (t && t.aborted) throw new Error('TASK_CANCELLED');
+      progress.taskId = taskId;
+      t.lastProgress = progress;
+      for (const clientRes of clients) {
+        sendSSE(clientRes, progress);
+      }
+    });
+
+    const outDir = path.join(__dirname, 'output');
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+
+    const slug = slugify(result.title);
+    const sub = result.subreddit === 'all' ? 'global' : result.subreddit;
+    const name = `reddit-search_${sub}_${slug}_${taskId}`;
+    const jsonPath = path.join(outDir, `${name}.json`);
+    const htmlPath = path.join(outDir, `${name}.html`);
+
+    fs.writeFileSync(jsonPath, JSON.stringify(result, null, 2), 'utf-8');
+    const htmlContent = generateHTML(result);
+    fs.writeFileSync(htmlPath, htmlContent, 'utf-8');
+
+    tasks.get(taskId).result = {
+      ...result,
+      jsonPath: `/output/${path.basename(jsonPath)}`,
+      htmlPath: `/output/${path.basename(htmlPath)}`,
+    };
+
+    const finalStatus = result.cancelled ? 'cancelled' : 'complete';
+    for (const clientRes of clients) {
+      sendSSE(clientRes, {
+        taskId, status: finalStatus,
+        message: result.cancelled ? '任务已取消（已爬取部分已保存）' : '爬取完成！',
+        result: tasks.get(taskId).result,
+      });
+      clientRes.end();
+    }
+  } catch (error) {
+    if (error.message === 'TASK_CANCELLED') {
+      for (const clientRes of clients) {
+        sendSSE(clientRes, { taskId, status: 'cancelled', message: '任务已取消' });
+        clientRes.end();
+      }
+    } else {
+      log.error('Search task failed', error);
+      for (const clientRes of clients) {
+        sendSSE(clientRes, { taskId, status: 'error', message: error.message });
+        clientRes.end();
+      }
+    }
+  }
+});
 
 // API: Start scraping
 app.post('/api/scrape', async (req, res) => {
@@ -656,7 +770,19 @@ function escapeHTML(str) {
     .replace(/"/g, '&quot;');
 }
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Server running at http://localhost:${PORT}`);
   console.log('Press Ctrl+C to stop');
+  console.log('');
+  try {
+    const status = await ensureChrome();
+    if (status.connected) {
+      console.log(`Chrome CDP connected: ${status.browser || 'OK'}`);
+    } else {
+      console.log('Chrome not available — Whirlpool/ProductReview scraping unavailable.');
+      console.log('  You can start Chrome manually or use the Web UI button.');
+    }
+  } catch (e) {
+    console.log('Chrome auto-start skipped:', e.message);
+  }
 });

@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forum Scraper 使用说明</title>
+<style>
+  :root {
+    --blue: #4a90d9; --blue-bg: #e8f1fb;
+    --reddit: #ff4500; --reddit-bg: #fff3ef;
+    --green: #80ba27; --green-bg: #f4faeb;
+    --orange: #f0ad4e; --orange-bg: #fff8e1;
+    --red: #e05050; --red-bg: #fff0f0;
+    --gray: #666; --gray-border: #e0e0e0;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #333; line-height: 1.8; background: #f8f9fa;
+  }
+
+  /* ── Hero ── */
+  .hero {
+    background: linear-gradient(135deg, #1a2332 0%, #2c3e50 40%, #4a90d9 100%);
+    color: #fff; padding: 56px 24px 48px; text-align: center; position: relative; overflow: hidden;
+  }
+  .hero::after {
+    content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 60px;
+    background: linear-gradient(transparent, #f8f9fa);
+  }
+  .hero h1 { font-size: 30px; font-weight: 800; letter-spacing: -.5px; position: relative; z-index: 1; }
+  .hero .sub { font-size: 15px; opacity: .85; margin-top: 8px; position: relative; z-index: 1; }
+  .hero .badges { margin-top: 16px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; position: relative; z-index: 1; }
+  .hero .badge {
+    padding: 4px 14px; border-radius: 20px; font-size: 12px; font-weight: 600;
+    background: rgba(255,255,255,.15); backdrop-filter: blur(4px);
+  }
+  .hero .ver { font-size: 12px; opacity: .5; margin-top: 24px; position: relative; z-index: 1; }
+
+  /* ── Nav ── */
+  .nav {
+    position: sticky; top: 0; z-index: 100; background: rgba(255,255,255,.95);
+    backdrop-filter: blur(8px); border-bottom: 1px solid var(--gray-border);
+    padding: 0 8px; overflow-x: auto; white-space: nowrap; text-align: center;
+  }
+  .nav a {
+    display: inline-block; padding: 11px 13px; font-size: 13px; color: var(--gray);
+    text-decoration: none; font-weight: 500; border-bottom: 2px solid transparent;
+    transition: .15s;
+  }
+  .nav a:hover, .nav a:focus { color: var(--blue); border-bottom-color: var(--blue); }
+
+  /* ── Layout ── */
+  .wrap { max-width: 880px; margin: 0 auto; padding: 32px 20px 60px; }
+
+  section { margin-bottom: 48px; scroll-margin-top: 50px; }
+  section > h2 {
+    font-size: 22px; font-weight: 700; margin-bottom: 20px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  section > h2 .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px; border-radius: 50%;
+    background: var(--blue); color: #fff; font-size: 16px; flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(74,144,217,.3);
+  }
+  section h3 {
+    font-size: 16px; font-weight: 700; margin: 28px 0 12px; color: #444;
+    display: flex; align-items: center; gap: 6px;
+  }
+  p { margin-bottom: 10px; font-size: 14px; color: #444; }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── Cards ── */
+  .card {
+    background: #fff; border-radius: var(--radius); padding: 22px 24px;
+    margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.05);
+    border-left: 4px solid var(--blue);
+  }
+  .card.reddit  { border-left-color: var(--reddit); }
+  .card.green   { border-left-color: var(--green); }
+  .card.orange  { border-left-color: var(--orange); }
+  .card > h3:first-child { margin-top: 0; }
+  .card p { font-size: 13px; color: #555; }
+
+  /* ── UI Mockup (real HTML) ── */
+  .mockup {
+    background: #1e1e2e; border-radius: 12px; padding: 8px; margin: 16px 0;
+    box-shadow: 0 4px 16px rgba(0,0,0,.15); overflow: hidden;
+  }
+  .mockup-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 14px; background: rgba(255,255,255,.06); border-radius: 6px;
+    margin-bottom: 8px; font-size: 11px; font-family: "SF Mono", Consolas, monospace;
+  }
+  .mockup-bar .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 2px; }
+  .mockup-bar .dot.on  { background: #4caf50; }
+  .mockup-bar .dot.off { background: #6c7086; }
+  .mockup-tabs {
+    display: flex; gap: 0; margin-bottom: 8px;
+  }
+  .mockup-tab {
+    flex: 1; padding: 8px; text-align: center; font-size: 11px;
+    font-family: "SF Mono", Consolas, monospace; border-radius: 5px 5px 0 0;
+  }
+  .mockup-tab.active { background: rgba(255,255,255,.08); color: #cdd6f4; }
+  .mockup-tab:not(.active) { color: #6c7086; }
+  .mockup-body {
+    background: rgba(255,255,255,.04); border-radius: 6px; padding: 12px 14px;
+    font-size: 11px; font-family: "SF Mono", Consolas, monospace; color: #6c7086;
+  }
+  .mockup-body input {
+    display: block; width: 100%; padding: 8px 10px; border-radius: 4px;
+    border: 1px solid rgba(255,255,255,.1); background: rgba(0,0,0,.2);
+    color: #89b4fa; font-family: inherit; font-size: 11px; margin-bottom: 8px;
+  }
+  .mockup-body .btn {
+    display: inline-block; padding: 6px 18px; border-radius: 4px;
+    background: #4a90d9; color: #fff; font-weight: 600; font-size: 11px;
+  }
+  .mockup-card {
+    background: rgba(255,255,255,.05); border-radius: 5px; padding: 10px 14px;
+    margin-top: 8px; font-size: 10px; color: #a6adc8;
+  }
+  .mockup-card .bar {
+    height: 6px; background: rgba(255,255,255,.1); border-radius: 3px;
+    margin: 6px 0; overflow: hidden;
+  }
+  .mockup-card .bar-fill {
+    height: 100%; width: 60%; background: linear-gradient(90deg, #4a90d9, #67b26f);
+    border-radius: 3px;
+  }
+  .mockup-card .done { color: #a6e3a1; }
+  .mockup-links { display: flex; gap: 8px; margin-top: 6px; }
+  .mockup-links span {
+    padding: 4px 10px; border-radius: 3px; font-size: 10px; font-weight: 600;
+    background: rgba(255,255,255,.1); color: #cdd6f4;
+  }
+
+  /* ── Source grid ── */
+  .source-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px; margin: 14px 0;
+  }
+  .source-item {
+    background: #fff; border-radius: var(--radius); padding: 18px;
+    text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,.04);
+    border-top: 3px solid var(--blue);
+    transition: transform .15s;
+  }
+  .source-item:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.08); }
+  .source-item.reddit { border-top-color: var(--reddit); }
+  .source-item.green  { border-top-color: var(--green); }
+  .source-item .icon { font-size: 28px; margin-bottom: 6px; }
+  .source-item .name { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+  .source-item .desc { font-size: 11px; color: #999; }
+
+  /* ── URL pills ── */
+  .url-pills { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+  .url-pill {
+    display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 8px 12px;
+    background: #fafafa; border-radius: 6px; border: 1px solid #eee;
+  }
+  .url-pill .pill-tag {
+    padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 700;
+    color: #fff; flex-shrink: 0; min-width: 78px; text-align: center;
+  }
+  .pill-wp{background:#4a90d9}.pill-rd{background:#ff4500}
+  .pill-rs{background:#e0561e}.pill-pr{background:#80ba27}
+  .url-pill code { font-size: 11px; color: #666; word-break: break-all; }
+
+  /* ── Steps ── */
+  .steps { counter-reset: step; list-style: none; padding: 0; }
+  .steps li {
+    counter-increment: step; padding: 10px 0 10px 42px; position: relative;
+    font-size: 14px;
+  }
+  .steps li::before {
+    content: counter(step);
+    position: absolute; left: 0; top: 11px;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--blue); color: #fff;
+    font-size: 13px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .steps li code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+
+  /* ── Comparison ── */
+  .compare {
+    display: grid; grid-template-columns: 1fr auto 1fr; gap: 0; margin: 16px 0;
+    align-items: center; border-radius: var(--radius); overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  }
+  .compare .c-bad  { background: #fff5f5; padding: 24px; text-align: center; }
+  .compare .c-good { background: #f5fff5; padding: 24px; text-align: center; }
+  .compare .c-vs   { background: #fff; padding: 12px 0; text-align: center; font-weight: 800; font-size: 18px; color: #ccc; }
+  .compare .c-label { font-weight: 700; font-size: 15px; margin-bottom: 10px; }
+  .compare .c-val   { font-size: 32px; font-weight: 800; margin: 6px 0; }
+  .compare .c-sub   { font-size: 12px; color: #888; }
+  .c-bad .c-val { color: #d33; } .c-good .c-val { color: #2a7; }
+
+  /* ── Speed bar visual ── */
+  .speed-bar-wrap { margin: 8px 0 2px; }
+  .speed-bar {
+    height: 8px; border-radius: 4px; margin-top: 6px; position: relative; overflow: hidden;
+  }
+  .speed-bar.slow { background: #ffe0e0; }
+  .speed-bar.slow::after {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+    width: 10%; background: #d33; border-radius: 4px;
+  }
+  .speed-bar.fast { background: #e0ffe0; }
+  .speed-bar.fast::after {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+    width: 100%; background: #2a7; border-radius: 4px;
+  }
+
+  /* ── Tables ── */
+  table.data-table {
+    width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0;
+    background: #fff; border-radius: var(--radius); overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,.04);
+  }
+  .data-table th, .data-table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #f0f0f0; }
+  .data-table th { background: #fafafa; font-weight: 600; color: #777; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+  .data-table td code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+  .data-table .check { color: #4caf50; font-weight: 700; }
+  .data-table .dash  { color: #ccc; }
+
+  /* ── Setting cards ── */
+  .setting-card {
+    display: flex; gap: 14px; align-items: flex-start;
+    background: #fff; padding: 16px 20px; border-radius: var(--radius);
+    margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.04);
+  }
+  .setting-card .s-icon {
+    font-size: 22px; width: 40px; height: 40px; display: flex;
+    align-items: center; justify-content: center; border-radius: var(--radius);
+    background: #f5f5f5; flex-shrink: 0;
+  }
+  .setting-card .s-body { flex: 1; }
+  .setting-card .s-label { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+  .setting-card .s-desc { font-size: 12px; color: #888; }
+  .setting-card .s-desc code { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+
+  /* ── File tree ── */
+  .arch-grid { display: grid; gap: 10px; margin: 12px 0; }
+  .arch-group { background: #fff; border-radius: var(--radius); padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+  .arch-group h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: #aaa; margin-bottom: 10px; }
+  .arch-group ul { list-style: none; padding: 0; display: grid; gap: 4px; }
+  .arch-group li { font-size: 12px; font-family: "SF Mono", Consolas, Monaco, monospace; color: #555; padding: 3px 0; }
+  .arch-group li b { color: #333; }
+
+  /* ── FAQ ── */
+  .faq-cat { font-size: 14px; font-weight: 700; color: #999; margin: 20px 0 10px; display: flex; align-items: center; gap: 6px; }
+  .faq-cat::after { content: ''; flex: 1; height: 1px; background: #eee; }
+  .faq-item {
+    background: #fff; border-radius: var(--radius); margin-bottom: 8px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.03); overflow: hidden;
+  }
+  .faq-q {
+    padding: 13px 18px; font-size: 14px; font-weight: 600; cursor: pointer;
+    display: flex; justify-content: space-between; align-items: center;
+    user-select: none; color: #444; gap: 10px;
+  }
+  .faq-q:hover { background: #fafafa; }
+  .faq-q .faq-emoji { flex-shrink: 0; font-size: 16px; }
+  .faq-q::after { content: '▸'; font-size: 12px; color: #ccc; flex-shrink: 0; transition: .2s; }
+  .faq-item.open .faq-q::after { transform: rotate(90deg); color: var(--blue); }
+  .faq-a {
+    padding: 0 18px 14px; font-size: 13px; color: var(--gray);
+    display: none; line-height: 1.9;
+  }
+  .faq-item.open .faq-a { display: block; }
+  .faq-a code.block {
+    display: block; background: #2d2d2d; color: #f8f8f2;
+    padding: 12px 16px; border-radius: 6px; margin: 8px 0; font-size: 12px;
+    white-space: pre; overflow-x: auto; line-height: 1.6;
+  }
+
+  /* ── Alerts ── */
+  .alert {
+    padding: 12px 18px; border-radius: var(--radius); font-size: 13px;
+    margin: 12px 0; display: flex; gap: 10px; align-items: flex-start;
+  }
+  .alert-tip  { background: #e8f1fb; color: #2d5f9e; }
+  .alert-warn { background: #fff8e1; color: #7a5f14; }
+  .alert-err  { background: #fff0f0; color: #933; }
+  .alert .a-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+
+  /* ── Quote block ── */
+  .quote {
+    background: #fafafa; border-left: 3px solid #ddd; padding: 14px 18px;
+    border-radius: 0 var(--radius) var(--radius) 0; font-size: 13px;
+    color: #666; margin: 12px 0; font-style: italic;
+  }
+
+  /* ── Back to top ── */
+  .btt {
+    position: fixed; bottom: 28px; right: 28px;
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--blue); color: #fff; border: none;
+    font-size: 18px; cursor: pointer; opacity: 0; transition: .3s;
+    box-shadow: 0 2px 12px rgba(74,144,217,.4); z-index: 200;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .btt.show { opacity: 1; }
+  .btt:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(74,144,217,.5); }
+
+  /* ── Footer ── */
+  footer {
+    text-align: center; padding: 32px 20px; font-size: 12px; color: #bbb;
+    border-top: 1px solid var(--gray-border); margin-top: 40px;
+  }
+
+  @media (max-width: 640px) {
+    .hero h1 { font-size: 22px; }
+    .wrap { padding: 20px 14px; }
+    .compare { grid-template-columns: 1fr; }
+    .compare .c-vs { padding: 0; }
+    .source-grid { grid-template-columns: 1fr 1fr; }
+    .setting-card { flex-direction: column; }
+    .nav a { padding: 9px 10px; font-size: 11px; }
+    .mockup-bar { font-size: 9px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══ Hero ═══ -->
+<header class="hero">
+  <h1>Forum Scraper 使用说明</h1>
+  <p class="sub">自动化论坛爬虫 — 一条命令启动，Web UI 全流程操作</p>
+  <div class="badges">
+    <span class="badge">Whirlpool</span>
+    <span class="badge">Reddit 帖子</span>
+    <span class="badge">Reddit 搜索</span>
+    <span class="badge">ProductReview</span>
+  </div>
+  <p class="ver">v1.0 &nbsp;·&nbsp; 2026-05-21 更新 &nbsp;·&nbsp; Node.js ≥ 18</p>
+</header>
+
+<!-- ═══ Nav ═══ -->
+<nav class="nav">
+  <a href="#s1">快速开始</a>
+  <a href="#s2">界面一览</a>
+  <a href="#s3">URL 粘贴</a>
+  <a href="#s4">Reddit 搜索</a>
+  <a href="#s5">设置 &amp; OAuth</a>
+  <a href="#s6">数据源详解</a>
+  <a href="#s7">输出格式</a>
+  <a href="#s8">FAQ</a>
+</nav>
+
+<!-- ═══ Content ═══ -->
+<div class="wrap">
+
+<!-- ── 1. 快速开始 ── -->
+<section id="s1">
+  <h2><span class="num">1</span> 快速开始</h2>
+
+  <div class="alert alert-tip"><span class="a-icon">💡</span> <strong>一条命令</strong>搞定一切——服务器自动启动 Chrome、加载配置。代理地址、OAuth 凭据等全部在 Web UI 中点击配置，<strong>无需编辑文件</strong>。</div>
+
+  <ol class="steps">
+    <li>安装 <strong>Node.js</strong>（<a href="https://nodejs.org" target="_blank">nodejs.org</a>，版本 ≥ 18）</li>
+    <li>在项目目录打开终端，先后运行：<br>
+      <code>npm install</code> <span style="color:#999;font-size:12px">（仅首次）</span><br>
+      <code>node server.js</code>
+    </li>
+    <li>浏览器打开 <a href="http://localhost:3000" target="_blank">http://localhost:3000</a></li>
+  </ol>
+
+  <p>启动后，页面顶部<strong>状态栏</strong>实时显示 Chrome / 代理 / OAuth 三项状态。首次使用建议：</p>
+
+  <ol style="list-style:none;padding:0">
+    <li style="padding:4px 0">🟢 <strong>Chrome</strong>：通常自动连接。如果灰色，点击状态栏「启动 Chrome」按钮</li>
+    <li style="padding:4px 0">🟡 <strong>代理</strong>：使用 Reddit 需先在设置面板填入 SOCKS5 地址（见 <a href="#s5">第 5 节</a>）</li>
+    <li style="padding:4px 0">🔵 <strong>OAuth</strong>：可选。配置后 Reddit 速度提升 10 倍（见 <a href="#s5">第 5 节</a>）</li>
+  </ol>
+</section>
+
+<!-- ── 2. 界面一览 ── -->
+<section id="s2">
+  <h2><span class="num">2</span> Web UI 界面一览</h2>
+
+  <div class="mockup">
+    <div class="mockup-bar">
+      <span><span class="dot on"></span> Chrome 已连接</span>
+      <span><span class="dot on"></span> 代理 socks5h://...</span>
+      <span><span class="dot off"></span> OAuth 未配置</span>
+      <span style="color:#6c7086">⚙</span>
+    </div>
+    <div class="mockup-tabs">
+      <div class="mockup-tab active">📋 粘贴链接</div>
+      <div class="mockup-tab">🔍 Reddit 搜索</div>
+    </div>
+    <div class="mockup-body">
+      <input type="text" value="https://forums.whirlpool.net.au/thread/3rvj6xr7" readonly>
+      <span class="btn">开始爬取</span>
+      <div class="mockup-card">
+        <span style="color:#cdd6f4">.../thread/3rvj6xr7</span>
+        <div class="bar"><div class="bar-fill"></div></div>
+        <span style="color:#89b4fa">正在爬取第 3/5 页...</span>
+        &nbsp;&nbsp;<span style="float:right;color:#6c7086;cursor:default">✕</span>
+      </div>
+      <div class="mockup-card">
+        <span class="done">✅ 完成 — r/CarsAustralia: 2025 Toyota Camry review  (287 条, 5 页)</span>
+        <div class="mockup-links"><span>HTML</span><span>JSON</span></div>
+      </div>
+    </div>
+  </div>
+
+  <p style="font-size:13px;color:#888;margin-top:10px">▲ 界面示意图：顶部状态栏 → Tab 切换 → 输入/表单区 → 任务进度卡片（每张有独立的进度条、状态文字、停止按钮、结果下载链接）</p>
+</section>
+
+<!-- ── 3. URL 粘贴 ── -->
+<section id="s3">
+  <h2><span class="num">3</span> 粘贴链接（通用）</h2>
+
+  <p>将链接粘贴到文本框（<strong>每行一个</strong>），系统自动识别数据源类型，点击「开始爬取」。支持<strong>批量</strong>粘贴多条不同来源的链接，最多 3 个并发。</p>
+
+  <div class="source-grid">
+    <div class="source-item">
+      <div class="icon">🟦</div>
+      <div class="name">Whirlpool</div>
+      <div class="desc">CDP 浏览器方式<br>绕过 Cloudflare</div>
+    </div>
+    <div class="source-item reddit">
+      <div class="icon">🟠</div>
+      <div class="name">Reddit 帖子</div>
+      <div class="desc">HTTP JSON API<br>需 SOCKS5 代理</div>
+    </div>
+    <div class="source-item reddit" style="border-top-color:#e0561e">
+      <div class="icon">🔍</div>
+      <div class="name">Reddit 搜索</div>
+      <div class="desc">关键词 → 自动爬取<br>所有匹配帖子</div>
+    </div>
+    <div class="source-item green">
+      <div class="icon">🟢</div>
+      <div class="name">ProductReview</div>
+      <div class="desc">CDP + 内部 API<br>含评分/购买信息</div>
+    </div>
+  </div>
+
+  <div class="url-pills">
+    <div class="url-pill"><span class="pill-tag pill-wp">Whirlpool</span>     <code>https://forums.whirlpool.net.au/thread/3rvj6xr7</code></div>
+    <div class="url-pill"><span class="pill-tag pill-rd">Reddit 帖子</span>   <code>https://old.reddit.com/r/CarsAustralia/comments/abc123/...</code></div>
+    <div class="url-pill"><span class="pill-tag pill-rs">Reddit 搜索</span>   <code>https://old.reddit.com/r/CarsAustralia/search?q=camry&amp;restrict_sr=on</code></div>
+    <div class="url-pill"><span class="pill-tag pill-pr">ProductReview</span> <code>https://www.productreview.com.au/listings/toyota-camry</code></div>
+  </div>
+
+  <table class="data-table" style="margin-top:14px">
+    <tr><th>操作</th><th>说明</th></tr>
+    <tr><td>批量粘贴</td><td>多行链接一次提交，互不干扰</td></tr>
+    <tr><td>停止 ✕</td><td>任务卡片右上角按钮，取消后<strong>已爬取部分自动保存</strong></td></tr>
+    <tr><td>结果下载</td><td>完成后显示 HTML / JSON 链接，点击即可查看</td></tr>
+    <tr><td>快捷键</td><td><code>Ctrl + Enter</code> 开始爬取</td></tr>
+  </table>
+</section>
+
+<!-- ── 4. Reddit 搜索 ── -->
+<section id="s4">
+  <h2><span class="num">4</span> Reddit 搜索（免拼接 URL）</h2>
+
+  <div class="card reddit">
+    <h3>🔍 不需要手写搜索 URL</h3>
+    <p>点击「Reddit 搜索」标签页，在表单中填入信息即可。系统自动构建搜索 URL、逐个爬取匹配帖子，最终合并为一份数据文件。</p>
+  </div>
+
+  <div class="setting-card">
+    <div class="s-icon">🔤</div>
+    <div class="s-body"><div class="s-label">关键词</div><div class="s-desc">搜索内容，如 <code>toyota camry</code>、<code>best SUV 2025</code></div></div>
+  </div>
+  <div class="setting-card">
+    <div class="s-icon">📁</div>
+    <div class="s-body"><div class="s-label">版块（可选）</div><div class="s-desc">限定子版块，如 <code>CarsAustralia</code>。留空 = 搜索全站</div></div>
+  </div>
+  <div class="setting-card">
+    <div class="s-icon">📊</div>
+    <div class="s-body"><div class="s-label">排序方式</div><div class="s-desc">相关度 · 热门 · 最佳 · 最新 · 最多评论</div></div>
+  </div>
+
+  <p style="margin-top:14px">搜索流程：<strong>搜索结果列表</strong>（最多 5 页 ~500 条）→ 逐个帖子爬取全部评论 → 统一输出。每条回复附带来源帖子信息（<code>_threadUrl</code> / <code>_threadTitle</code>）。</p>
+</section>
+
+<!-- ── 5. 设置 & OAuth ── -->
+<section id="s5">
+  <h2><span class="num">5</span> 设置面板 &amp; OAuth 提速</h2>
+
+  <p>点击页面顶部 ⚙ 齿轮按钮打开设置面板，所有修改<strong>保存后即时生效</strong>。</p>
+
+  <div class="setting-card">
+    <div class="s-icon">🔌</div>
+    <div class="s-body">
+      <div class="s-label">SOCKS5 代理地址</div>
+      <div class="s-desc">中国大陆访问 Reddit 必需。格式：<code>socks5h://127.0.0.1:7897</code><br>
+      端口号查看：Clash Verge → 设置 → 端口 → Mixed Port（默认 7897）</div>
+    </div>
+  </div>
+  <div class="setting-card">
+    <div class="s-icon">🔑</div>
+    <div class="s-body">
+      <div class="s-label">Reddit Client ID + Client Secret</div>
+      <div class="s-desc">可选。配置后速率 <strong>10 → 100 次/分钟</strong>（10 倍提升）</div>
+    </div>
+  </div>
+  <div class="setting-card">
+    <div class="s-icon">🌐</div>
+    <div class="s-body">
+      <div class="s-label">Chrome 路径</div>
+      <div class="s-desc">通常自动检测。如状态栏始终灰色，手动填入完整路径</div>
+    </div>
+  </div>
+
+  <!-- OAuth 详细说明 -->
+  <h3>⚡ Reddit OAuth 速度对比</h3>
+  <div class="compare">
+    <div class="c-bad">
+      <div class="c-label">❌ 未认证</div>
+      <div class="c-val">10</div>
+      <div class="c-sub">次 / 分钟 (QPM)</div>
+      <div class="speed-bar-wrap"><div class="speed-bar slow"></div></div>
+      <div class="c-sub" style="margin-top:6px">每请求间隔 <strong>6 秒</strong></div>
+    </div>
+    <div class="c-vs">VS</div>
+    <div class="c-good">
+      <div class="c-label">✅ OAuth</div>
+      <div class="c-val">100</div>
+      <div class="c-sub">次 / 分钟 (QPM)</div>
+      <div class="speed-bar-wrap"><div class="speed-bar fast"></div></div>
+      <div class="c-sub" style="margin-top:6px">每请求间隔 <strong>0.6 秒</strong></div>
+    </div>
+  </div>
+
+  <div class="alert alert-tip"><span class="a-icon">⏱</span> Reddit 搜索结果 50 个帖子：无 OAuth 等 <strong>5 分钟</strong> → 有 OAuth 仅 <strong>30 秒</strong>。</div>
+
+  <h3>获取 OAuth 凭据</h3>
+  <ol class="steps">
+    <li>访问 <a href="https://old.reddit.com/prefs/apps" target="_blank">old.reddit.com/prefs/apps</a>（旧版更稳定）</li>
+    <li>页面底部点「create an app」</li>
+    <li>填写：
+      <table class="data-table" style="margin-top:8px">
+        <tr><td style="width:120px">name</td><td>随便取，如 <code>forum-scraper</code></td></tr>
+        <tr><td>type</td><td>选 <strong>script</strong></td></tr>
+        <tr><td>redirect uri</td><td><code>http://localhost:8080</code></td></tr>
+        <tr><td>about url / description</td><td>留空</td></tr>
+      </table>
+    </li>
+    <li>点「create app」</li>
+    <li>拿到 <code>client_id</code>（名字下面的乱码）和 <code>secret</code></li>
+    <li>填入设置面板，保存</li>
+  </ol>
+
+  <div class="alert alert-warn"><span class="a-icon">⚠</span> 如果点 create app 没反应——Reddit 新政策可能要求先阅读条款。点提示链接滑到底部找 Accept 按钮。如仍失败，确认用的是 <strong>old.reddit.com</strong>。不配 OAuth 也完全可用，只是慢些。</div>
+</section>
+
+<!-- ── 6. 数据源详解 ── -->
+<section id="s6">
+  <h2><span class="num">6</span> 各数据源详解与注意事项</h2>
+
+  <div class="card">
+    <h3>🟦 Whirlpool — CDP 浏览器方式</h3>
+    <p>通过 Chrome DevTools Protocol 操控真实浏览器，模拟人工访问以<strong>绕过 Cloudflare</strong>。</p>
+    <p><strong>首次使用：</strong>自动打开的 Chrome 窗口访问 Whirlpool 时可能弹出"我是人类"验证——点一下即可，Chrome 会记住验证状态，之后同站点不再需要。</p>
+    <div class="alert alert-warn" style="margin:10px 0 0"><span class="a-icon">⚠</span>
+      <span>爬虫 Chrome 与你日常浏览器<strong>是两个独立窗口</strong>（独立 user-data-dir）。<br>
+      不要关闭它。如误关，在 Web UI 状态栏点「启动 Chrome」即可恢复。选择器变更时运行 <code>node debug.js</code> 重新分析。</span>
+    </div>
+  </div>
+
+  <div class="card reddit">
+    <h3>🟠 Reddit 帖子 — HTTP JSON API + 代理</h3>
+    <p>直接调用 Reddit JSON API，不走浏览器。<strong>依赖 SOCKS5 代理</strong>（中国大陆）。<br>
+    <strong>速率保护：</strong>全局共享限流器，并发任务自动协调，不会触发 429。多条 Reddit 并发时单条速度等比下降（总量恒定）。Reddit 搜索最多 5 页（~500 条），帖子最多 1000 条评论。</p>
+    <div class="alert alert-warn" style="margin:10px 0 0"><span class="a-icon">⚠</span> 代理节点<strong>必须选美国或欧洲</strong>。香港/新加坡节点常被 Reddit 拦截（403）。</div>
+  </div>
+
+  <div class="card green">
+    <h3>🟢 ProductReview — CDP + 浏览器内 API</h3>
+    <p>通过 Chrome CDP 在页面内调用 ProductReview 内部 API，继承浏览器 Cloudflare cookies。<br>
+    <strong>数据亮点：</strong>评分 (1-5)、子评分（品质 / 性价比 / 噪音）、购买信息（价格 / 日期 / 车型 / 变速箱 / 新旧）、完整规格参数。</p>
+    <div class="alert alert-err" style="margin:10px 0 0"><span class="a-icon">⚠</span> <strong>已知限制：第 5 页起可能 403</strong>（Cloudflare API 限流）。约抓到 ~400/416 条，丢失最后十几条。这是 CF 层面的拦截。</div>
+  </div>
+</section>
+
+<!-- ── 7. 输出 ── -->
+<section id="s7">
+  <h2><span class="num">7</span> 输出格式说明</h2>
+
+  <p>所有文件保存在 <code>output/</code> 目录，JSON + HTML 双格式，文件命名自动包含来源和标题。</p>
+
+  <table class="data-table">
+    <tr><th>数据源</th><th>命名规则</th><th>示例</th></tr>
+    <tr><td>Whirlpool</td><td><code>thread_&lt;标题&gt;_&lt;threadId&gt;</code></td><td><code>thread_Best_Cars_9j87f2.json</code></td></tr>
+    <tr><td>Reddit 帖子</td><td><code>reddit_&lt;版块&gt;_&lt;标题&gt;_&lt;postId&gt;</code></td><td><code>reddit_CarsAustralia_Toyota_abc123.json</code></td></tr>
+    <tr><td>Reddit 搜索</td><td><code>reddit-search_&lt;版块&gt;_&lt;标题&gt;_&lt;taskId&gt;</code></td><td><code>reddit-search_global_camry_mpdxxx.json</code></td></tr>
+    <tr><td>ProductReview</td><td><code>productreview_&lt;slug&gt;_&lt;标题&gt;_&lt;id前8位&gt;</code></td><td><code>productreview_toyota-camry_Camry_d5f67.json</code></td></tr>
+  </table>
+
+  <h3>JSON 结构 — 通用字段</h3>
+  <table class="data-table">
+    <tr><th>字段</th><th style="text-align:center">Whirlpool</th><th style="text-align:center">Reddit</th><th style="text-align:center">PR</th><th>含义</th></tr>
+    <tr><td><code>floor</code></td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td><td>楼层（1 起始）</td></tr>
+    <tr><td><code>userName</code></td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td><td>用户名</td></tr>
+    <tr><td><code>date</code></td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td><td>时间（ISO 8601）</td></tr>
+    <tr><td><code>content</code></td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td><td>正文（纯文本）</td></tr>
+    <tr><td><code>isOP</code></td><td class="check">✓</td><td class="check">✓</td><td class="dash">—</td><td>是否楼主</td></tr>
+    <tr><td><code>userId</code></td><td class="check">✓</td><td class="dash">—</td><td class="dash">—</td><td>用户 ID</td></tr>
+    <tr><td><code>score</code></td><td class="dash">—</td><td class="check">✓</td><td class="dash">—</td><td>获赞数</td></tr>
+    <tr><td><code>rating</code></td><td class="dash">—</td><td class="dash">—</td><td class="check">✓</td><td>评分 (1-5)</td></tr>
+    <tr><td><code>subRatings</code></td><td class="dash">—</td><td class="dash">—</td><td class="check">✓</td><td>品质/性价比/噪音</td></tr>
+    <tr><td><code>purchaseInfo</code></td><td class="dash">—</td><td class="dash">—</td><td class="check">✓</td><td>购买信息</td></tr>
+  </table>
+
+  <p style="font-size:12px;color:#999;margin-top:4px">✓ = 有值 · — = 无此字段（JSON 中不会出现该 key）</p>
+
+  <h3>用于 AI 分析</h3>
+  <div class="quote">
+    给 AI 的 prompt 示例：<br><br>
+    <em>"以下是来自 {Whirlpool/Reddit/ProductReview} 的帖子数据（JSON 格式）。请帮我：<br>
+    1. 提取用户提到的产品和品牌 &nbsp; 2. 总结核心痛点和需求 &nbsp; 3. 按情感分类回复 &nbsp; 4. 找出讨论热度最高的话题 &nbsp; 5. (ProductReview) 关注评分与购买信息的关联"</em>
+  </div>
+</section>
+
+<!-- ── 8. FAQ ── -->
+<section id="s8">
+  <h2><span class="num">8</span> 常见问题排查</h2>
+
+  <!-- 所有 FAQ 分 4 大类 -->
+
+  <div class="faq-cat"><span>🖥</span> 服务器</div>
+  <div class="faq-item">
+    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')"><span class="faq-emoji">🔴</span> 启动报错 EADDRINUSE，端口 3000 被占用</div>
+    <div class="faq-a">上一次没有正常退出。在 <strong>PowerShell</strong> 中执行：
+<code class="block">Get-NetTCPConnection -LocalPort 3000 | ForEach-Object {
+    Stop-Process -Id $_.OwningProcess -Force
+}</code>
+    然后重新 <code>node server.js</code> 即可。</div>
+  </div>
+
+  <div class="faq-cat"><span>🌐</span> Chrome / CDP</div>
+  <div class="faq-item">
+    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')"><span class="faq-emoji">⚪</span> 状态栏 Chrome 灰色，显示「未连接」</div>
+    <div class="faq-a">① 先点状态栏「<strong>启动 Chrome</strong>」按钮 &nbsp; ② 检查设置面板中 Chrome 路径 &nbsp; ③ 手动运行 <code>start-chrome.bat</code>（备用）&nbsp; ④ 检查 9222 端口有无被占用</div>
+  </div>
+  <div class="faq-item">
+    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')"><span class="faq-emoji">❓</span> Chrome 已启动，但 Whirlpool / ProductReview 抓不到数据</div>
+    <div class="faq-a">需要做一次 Cloudflare 验证：爬虫打开的 Chrome 标签页若显示「Verify you are human」，<strong>点击通过</strong>即可。之后该站点不再需要。</div>
+  </div>
+  <div class="faq-item">
+    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')"><span class="faq-emoji">🚫</span> 不小心关了爬虫 Chrome 窗口</div>
+    <div class="faq-a">在 Web UI 状态栏点「启动 Chrome」即可重新打开。爬虫 Chrome 和你的日常 Chrome 互不影响。</div>
+  </div>
+
+  <div class="faq-cat"><span>🔗</span> Reddit / 代理</div>
+  <div class="faq-item">
+    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')"><span class="faq-emoji">🔌</span> 报错「Cannot connect to proxy」</div>
+    <div class="faq-a">① 确认 Clash/VPN 已启动 &nbsp; ② 确认设置面板中 SOCKS5 端口号正确 &nbsp; ③ Clash Verge 用户查看「设置 → 端口 → Mixed Port」（默认 7897）</div>
+  </div>
+  <div class="faq-item">
+    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')"><span class="faq-emoji">🚷</span> Reddit 返回 403 Blocked</div>
+    <div class="faq-a">代理 IP 被 Reddit 标记。切换到<strong>美国或欧洲</strong>节点再试。<strong>香港/新加坡节点常被拦截。</strong></div>
+  </div>
+  <div class="faq-item">
+    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')"><span class="faq-emoji">⏳</span> Reddit 返回 429 Rate Limited</div>
+    <div class="faq-a">正常限流，全局速率限制器会自动排队等待恢复。频繁遇到可配置 OAuth（第 5 节）。同时跑多条 Reddit 时单条会慢（总量恒定），这是预期行为。</div>
+  </div>
+  <div class="faq-item">
+    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')"><span class="faq-emoji">📭</span> Reddit 返回 404</div>
+    <div class="faq-a">链接无效、帖子已删除、或设为私有。</div>
+  </div>
+
+  <div class="faq-cat"><span>📦</span> 爬取结果</div>
+  <div class="faq-item">
+    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')"><span class="faq-emoji">0️⃣</span> Whirlpool 提取到 0 条内容</div>
+    <div class="faq-a">论坛改版导致选择器失效。运行 <code>node debug.js</code> 重新分析页面 DOM 结构。</div>
+  </div>
+  <div class="faq-item">
+    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')"><span class="faq-emoji">0️⃣</span> ProductReview 结果为 0 条</div>
+    <div class="faq-a">确认 Chrome 中 productreview.com.au 页面能正常打开。查看终端日志中的 API 诊断信息。CF session 可能过期，刷新页面。</div>
+  </div>
+  <div class="faq-item">
+    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')"><span class="faq-emoji">🔒</span> ProductReview 第 5 页后 403</div>
+    <div class="faq-a"><strong>已知限制</strong>（Cloudflare API 限流）。约 400/416 条正常获取，最后十几条丢失。尝试分批次爬取可略微缓解，但无法根治。</div>
+  </div>
+  <div class="faq-item">
+    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')"><span class="faq-emoji">🔄</span> 停止按钮点了没反应</div>
+    <div class="faq-a">浏览器缓存了旧版页面。硬刷新（Ctrl+Shift+R）即可。</div>
+  </div>
+
+  <p style="margin-top:20px;font-size:13px;color:#999">📝 运行日志见 <code>logs/scraper-YYYY-MM-DD.log</code>，Web UI 底部可展开直接查看今日日志。</p>
+</section>
+
+</div>
+
+<!-- ═══ Back to top ═══ -->
+<button class="btt" id="btt" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="回到顶部">↑</button>
+
+<footer>
+  <p>Forum Scraper v1.0 · 仅供产品市场分析使用 · 请遵守目标网站服务条款</p>
+</footer>
+
+<script>
+  // Back-to-top visibility
+  const btt = document.getElementById('btt');
+  window.addEventListener('scroll', () => btt.classList.toggle('show', window.scrollY > 400));
+
+  // Open first FAQ item in each group for discoverability
+  document.querySelectorAll('.faq-cat').forEach(cat => {
+    const first = cat.nextElementSibling;
+    if (first && first.classList.contains('faq-item')) first.classList.add('open');
+  });
+</script>
+
+</body>
+</html>

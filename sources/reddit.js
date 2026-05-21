@@ -1,4 +1,5 @@
 const { fetchRedditJSON } = require('../proxy');
+const { redditLimiter } = require('../rate-limiter');
 const log = require('../logger');
 
 let oauthToken = null;
@@ -38,7 +39,8 @@ async function getOAuthToken() {
           const data = JSON.parse(Buffer.concat(chunks).toString());
           oauthToken = data.access_token;
           oauthExpiry = Date.now() + (data.expires_in || 3600) * 1000;
-          log.info(`OAuth token acquired, expires in ${data.expires_in}s`);
+          redditLimiter.setQPM(100);
+          log.info(`OAuth token acquired, QPM→100, expires in ${data.expires_in}s`);
           resolve(oauthToken);
         } catch (e) {
           log.warn('OAuth token parse failed, falling back to unauthenticated');
@@ -56,6 +58,8 @@ async function fetchRedditOAuth(url) {
   const token = await getOAuthToken();
   // fall back to unauthenticated
   if (!token) return fetchRedditJSON(url);
+
+  await redditLimiter.acquire();
 
   const https = require('https');
   const parsedUrl = new URL(url);
@@ -95,7 +99,8 @@ async function fetchRedditOAuth(url) {
         if (res.statusCode === 401) {
           oauthToken = null;
           oauthExpiry = 0;
-          log.warn('OAuth token expired, will retry unauthenticated');
+          redditLimiter.setQPM(10);
+          log.warn('OAuth token expired, QPM→10, will retry unauthenticated');
           // Retry without auth
           fetchRedditJSON(url).then(resolve).catch(reject);
           return;
@@ -133,7 +138,9 @@ function hasOAuth() {
 }
 
 function rateLimitDelay() {
-  return hasOAuth() ? 600 : 6000;
+  // Global rate limiter (rate-limiter.js) handles primary QPM enforcement.
+  // This is just a small polite gap between pages to avoid hammering.
+  return hasOAuth() ? 200 : 500;
 }
 
 function parseRedditUrl(postUrl) {
